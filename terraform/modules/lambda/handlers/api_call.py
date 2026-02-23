@@ -5,12 +5,12 @@ Triggered by Step Functions as part of the data collection pipeline.
 
 Input event:
   {
-    "spots_s3_key": "spots/spot_wAddr_1045.parquet"  (optional, default provided)
+    "spots_s3_key": "spots/spot.parquet"  (optional, default provided)
   }
 
 Output:
-  Saves raw JSON to S3: s3://{bucket}/raw/{date}/marine_{batch}.json, weather_{batch}.json
-  Returns: { "status": "success", "date": "...", "batches": N, "spots": N }
+  Saves raw JSON to S3: s3://{bucket}/raw/forecast/YYYY/MM/DD/HH/marine_{batch}.json, weather_{batch}.json
+  Returns: { "status": "success", "date": "...", "raw_prefix": "...", "batches": N, "spots": N }
 """
 
 import json
@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError
 from urllib.parse import urlencode
+import urllib3
 
 import boto3
 
@@ -87,15 +88,24 @@ def _fetch_weather_batch(lats, lons):
 
 
 def handler(event, context):
+    http = urllib3.PoolManager()
+    ip = "unknown"
+    try:
+        response = http.request('GET', 'https://api.ipify.org?format=json', timeout=5.0)
+        ip = json.loads(response.data.decode('utf-8')).get("ip")
+    except Exception as e:
+        print(f"Could not get public IP: {e}")
+    print(f"My public IP: {ip}")
+
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
-    prefix = f"raw/{date_str}"
+    prefix = f"raw/forecast/{now.strftime('%Y/%m/%d/%H')}"
 
     # Load spot coordinates from S3
-    spots_key = event.get("spots_s3_key", "spots/spot_coords.json")
+    spots_key = event.get("spots_s3_key", "spots/spot_test.json")
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=spots_key)
-        spots = json.loads(obj["Body"].read().decode())
+        spots = json.load(obj["Body"])["spots"]
     except Exception as e:
         return {"status": "error", "message": f"Failed to load spots: {str(e)}"}
 
@@ -140,7 +150,8 @@ def handler(event, context):
     return {
         "status": "success" if not errors else "partial",
         "date": date_str,
-        "s3_prefix": f"s3://{S3_BUCKET}/{prefix}/",
+        "spots_s3_key": spots_key,
+        "raw_prefix": prefix,
         "total_spots": total_spots,
         "batches_completed": batches_completed,
         "errors": errors[:5],

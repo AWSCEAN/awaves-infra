@@ -1,4 +1,33 @@
 # =============================================================================
+# Lambda Layer: valkey 8.x (required for ElastiCache Valkey writes in save Lambda)
+# =============================================================================
+
+resource "null_resource" "valkey_layer_build" {
+  triggers = {
+    requirements = filemd5("${path.module}/layers/valkey_requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    command = "pip install -r ${path.module}/layers/valkey_requirements.txt -t ${path.module}/layers/valkey/python --platform manylinux2014_x86_64 --only-binary=:all: --upgrade --quiet"
+  }
+}
+
+data "archive_file" "valkey_layer" {
+  type        = "zip"
+  source_dir  = "${path.module}/layers/valkey"
+  output_path = "${path.module}/layers/valkey.zip"
+  depends_on  = [null_resource.valkey_layer_build]
+}
+
+resource "aws_lambda_layer_version" "valkey" {
+  filename            = data.archive_file.valkey_layer.output_path
+  source_code_hash    = data.archive_file.valkey_layer.output_base64sha256
+  layer_name          = "${var.name}-valkey"
+  compatible_runtimes = ["python3.12"]
+  description         = "Valkey client 8.x for Python 3.12"
+}
+
+# =============================================================================
 # Deployment packages (one zip per handler)
 # =============================================================================
 
@@ -38,6 +67,12 @@ data "archive_file" "alert_ml_pipeline" {
   output_path = "${path.module}/handlers/alert_ml_pipeline.zip"
 }
 
+data "archive_file" "bedrock_summary" {
+  type        = "zip"
+  source_file = "${path.module}/handlers/bedrock_summary.py"
+  output_path = "${path.module}/handlers/bedrock_summary.zip"
+}
+
 # =============================================================================
 # Lambda Functions
 # =============================================================================
@@ -54,9 +89,13 @@ resource "aws_lambda_function" "api_call" {
   filename         = data.archive_file.api_call.output_path
   source_code_hash = data.archive_file.api_call.output_base64sha256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
-      ENVIRONMENT       = var.environment
+      ENVIRONMENT        = var.environment
       S3_BUCKET_DATALAKE = var.s3_bucket_datalake
     }
   }
@@ -78,6 +117,10 @@ resource "aws_lambda_function" "preprocessing" {
   filename         = data.archive_file.preprocessing.output_path
   source_code_hash = data.archive_file.preprocessing.output_base64sha256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       ENVIRONMENT        = var.environment
@@ -90,28 +133,61 @@ resource "aws_lambda_function" "preprocessing" {
   }
 }
 
-# 3. Save - persist processed data to DynamoDB
+# 3. Save - persist processed data to DynamoDB and ElastiCache
 resource "aws_lambda_function" "save" {
   function_name = "${var.name}-save"
   role          = var.lambda_execution_role_arn
   handler       = "save.handler"
   runtime       = "python3.12"
-  timeout       = 120
-  memory_size   = 256
+  timeout       = 600
+  memory_size   = 512
+  layers        = [aws_lambda_layer_version.valkey.arn]
 
   filename         = data.archive_file.save.output_path
   source_code_hash = data.archive_file.save.output_base64sha256
 
+  dynamic "vpc_config" {
+    for_each = var.vpc_id != "" && length(var.private_subnet_ids) > 0 ? [1] : []
+    content {
+      subnet_ids         = var.private_subnet_ids
+      security_group_ids = [aws_security_group.save_lambda[0].id]
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
-      ENVIRONMENT        = var.environment
-      S3_BUCKET_DATALAKE = var.s3_bucket_datalake
-      DYNAMODB_TABLE     = var.dynamodb_table_surf_data
+      ENVIRONMENT          = var.environment
+      S3_BUCKET_DATALAKE   = var.s3_bucket_datalake
+      DYNAMODB_TABLE       = var.dynamodb_table_surf_info
+      ELASTICACHE_ENDPOINT = var.elasticache_endpoint
+      MODEL_VERSION        = var.model_version
     }
   }
 
   tags = {
     Name = "${var.name}-save"
+  }
+}
+
+resource "aws_security_group" "save_lambda" {
+  count       = var.vpc_id != "" ? 1 : 0
+  name        = "${var.name}-save-lambda"
+  description = "Save Lambda to ElastiCache Valkey port 6379"
+  vpc_id      = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.name}-save-lambda"
   }
 }
 
@@ -126,6 +202,10 @@ resource "aws_lambda_function" "drift_detection" {
 
   filename         = data.archive_file.drift_detection.output_path
   source_code_hash = data.archive_file.drift_detection.output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -150,6 +230,10 @@ resource "aws_lambda_function" "alert_monitoring" {
 
   filename         = data.archive_file.alert_monitoring.output_path
   source_code_hash = data.archive_file.alert_monitoring.output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -179,6 +263,7 @@ resource "aws_lambda_permission" "sns_alert_monitoring" {
 }
 
 # 6. Alert ML Pipeline - notify data scientists on bad evaluation
+
 resource "aws_lambda_function" "alert_ml_pipeline" {
   function_name = "${var.name}-alert-ml-pipeline"
   role          = var.lambda_execution_role_arn
@@ -190,6 +275,10 @@ resource "aws_lambda_function" "alert_ml_pipeline" {
   filename         = data.archive_file.alert_ml_pipeline.output_path
   source_code_hash = data.archive_file.alert_ml_pipeline.output_base64sha256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       ENVIRONMENT   = var.environment
@@ -199,5 +288,34 @@ resource "aws_lambda_function" "alert_ml_pipeline" {
 
   tags = {
     Name = "${var.name}-alert-ml-pipeline"
+  }
+}
+
+# 7. Bedrock Summary - generate AI surf summary from DynamoDB conditions
+resource "aws_lambda_function" "bedrock_summary" {
+  function_name = "${var.name}-bedrock-summary"
+  role          = var.lambda_execution_role_arn
+  handler       = "bedrock_summary.handler"
+  runtime       = "python3.12"
+  timeout       = 30
+  memory_size   = 256
+
+  filename         = data.archive_file.bedrock_summary.output_path
+  source_code_hash = data.archive_file.bedrock_summary.output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT      = var.environment
+      DYNAMODB_TABLE   = var.dynamodb_table_surf_info
+      BEDROCK_MODEL_ID = var.bedrock_model_id
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-bedrock-summary"
   }
 }

@@ -44,6 +44,7 @@ resource "aws_iam_role_policy" "step_functions_invoke_lambda" {
           "sagemaker:CreateTransformJob",
           "sagemaker:DescribeTransformJob",
           "sagemaker:StopTransformJob",
+          "sagemaker:AddTags",
         ]
         Resource = "*"
       },
@@ -117,21 +118,23 @@ resource "aws_sfn_state_machine" "data_collection" {
           TransformInput = {
             DataSource = {
               S3DataSource = {
-                S3DataType = "S3Prefix"
-                S3Uri      = "s3://${var.s3_bucket_datalake}/processed/"
+                S3DataType   = "S3Prefix"
+                "S3Uri.$"    = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.processed_prefix)"
               }
             }
-            ContentType     = "text/csv"
-            SplitType       = "Line"
+            ContentType = "text/csv"
+            SplitType   = "None"
           }
+          MaxPayloadInMB = 100
           TransformOutput = {
-            S3OutputPath = "s3://${var.s3_bucket_datalake}/inference/"
+            "S3OutputPath.$" = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.inference_prefix)"
           }
           TransformResources = {
             InstanceCount = 1
             InstanceType  = "ml.m5.large"
           }
         }
+        ResultPath = "$.transform_result"
         Next = "DriftDetection"
         Retry = [{
           ErrorEquals     = ["States.TaskFailed"]
@@ -149,8 +152,9 @@ resource "aws_sfn_state_machine" "data_collection" {
         Resource = var.lambda_drift_detection_arn
         Comment  = "Compute PSI on inference output; trigger retraining if isDrift=true"
         Parameters = {
-          inference_s3_path = "s3://${var.s3_bucket_datalake}/inference/"
+          "inference_s3_path.$" = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.inference_prefix)"
         }
+        ResultPath = "$.drift_result"
         Next = "SaveToDatabase"
         Retry = [{
           ErrorEquals     = ["States.TaskFailed"]
@@ -166,8 +170,11 @@ resource "aws_sfn_state_machine" "data_collection" {
       SaveToDatabase = {
         Type     = "Task"
         Resource = var.lambda_save_arn
-        Comment  = "Persist processed data to DynamoDB"
-        Next     = "PipelineSucceeded"
+        Comment  = "Persist inference predictions to DynamoDB"
+        Parameters = {
+          "inference_prefix.$" = "$.inference_prefix"
+        }
+        Next = "PipelineSucceeded"
         Retry = [{
           ErrorEquals     = ["States.TaskFailed"]
           IntervalSeconds = 10

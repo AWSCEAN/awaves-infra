@@ -23,9 +23,33 @@ variable "s3_bucket_ml" {
   type        = string
 }
 
-variable "dynamodb_table_surf_data" {
-  description = "Surf data DynamoDB table name"
+variable "dynamodb_table_surf_info" {
+  description = "Surf info DynamoDB table name"
   type        = string
+}
+
+variable "elasticache_endpoint" {
+  description = "ElastiCache primary endpoint address"
+  type        = string
+  default     = ""
+}
+
+variable "vpc_id" {
+  description = "VPC ID for Lambda VPC config (required for ElastiCache access)"
+  type        = string
+  default     = ""
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs for Lambda VPC config (required for ElastiCache access)"
+  type        = list(string)
+  default     = []
+}
+
+variable "model_version" {
+  description = "SageMaker model version label written to DynamoDB metadata"
+  type        = string
+  default     = "awaves-v1"
 }
 
 variable "sns_alerts_topic_arn" {
@@ -37,4 +61,10 @@ variable "discord_webhook_url" {
   description = "Discord webhook URL for alerts (leave empty to skip)"
   type        = string
   default     = ""
+}
+
+variable "bedrock_model_id" {
+  description = "Bedrock model ID for surf summary generation"
+  type        = string
+  default     = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 }

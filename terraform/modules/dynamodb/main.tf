@@ -2,20 +2,25 @@
 # DynamoDB Tables
 # =============================================================================
 
-resource "aws_dynamodb_table" "surf_data" {
-  name         = "${var.name}-surf-data"
+resource "aws_dynamodb_table" "surf_info" {
+  name         = "${var.name}-surf-info"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LocationId"
-  range_key    = "SurfTimestamp"
+  hash_key     = "locationId"
+  range_key    = "surfTimestamp"
 
   attribute {
-    name = "LocationId"
+    name = "locationId"
     type = "S"
   }
 
   attribute {
-    name = "SurfTimestamp"
+    name = "surfTimestamp"
     type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiredAt"
+    enabled        = true
   }
 
   point_in_time_recovery {
@@ -23,7 +28,7 @@ resource "aws_dynamodb_table" "surf_data" {
   }
 
   tags = {
-    Name = "${var.name}-surf-data"
+    Name = "${var.name}-surf-info"
   }
 }
 

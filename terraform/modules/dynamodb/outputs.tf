@@ -1,11 +1,11 @@
-output "table_surf_data_name" {
-  description = "Name of the surf data DynamoDB table"
-  value       = aws_dynamodb_table.surf_data.name
+output "table_surf_info_name" {
+  description = "Name of the surf info DynamoDB table"
+  value       = aws_dynamodb_table.surf_info.name
 }
 
-output "table_surf_data_arn" {
-  description = "ARN of the surf data DynamoDB table"
-  value       = aws_dynamodb_table.surf_data.arn
+output "table_surf_info_arn" {
+  description = "ARN of the surf info DynamoDB table"
+  value       = aws_dynamodb_table.surf_info.arn
 }
 
 output "table_saved_list_name" {

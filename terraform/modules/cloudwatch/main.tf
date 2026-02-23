@@ -76,8 +76,10 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_call_errors" {
   tags = { Name = "${var.name}-lambda-api-call-errors" }
 }
 
-# Step Functions: Execution failure alarm
+# Step Functions: Execution failure alarm (skipped until step_functions is applied in Phase 3)
 resource "aws_cloudwatch_metric_alarm" "sfn_failed" {
+  count = var.step_functions_state_machine_arn != "" ? 1 : 0
+
   alarm_name          = "${var.name}-sfn-execution-failed"
   alarm_description   = "Step Functions data collection pipeline failed"
   comparison_operator = "GreaterThanThreshold"
@@ -122,81 +124,87 @@ resource "aws_cloudwatch_dashboard" "awaves" {
   dashboard_name = "${var.name}-overview"
 
   dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title  = "Lambda Invocations & Errors"
-          region = var.aws_region
-          period = 300
-          stat   = "Sum"
-          metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-api-call"],
-            ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-api-call"],
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-preprocessing"],
-            ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-preprocessing"],
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-save"],
-            ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-save"],
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title  = "Step Functions Executions"
-          region = var.aws_region
-          period = 300
-          stat   = "Sum"
-          metrics = [
-            ["AWS/States", "ExecutionsStarted", "StateMachineArn", var.step_functions_state_machine_arn],
-            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", var.step_functions_state_machine_arn],
-            ["AWS/States", "ExecutionsFailed", "StateMachineArn", var.step_functions_state_machine_arn],
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title  = "DynamoDB Requests"
-          region = var.aws_region
-          period = 300
-          stat   = "Sum"
-          metrics = [
-            ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${var.name}-surf-data"],
-            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name}-surf-data"],
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title  = "Lambda Duration (P95)"
-          region = var.aws_region
-          period = 300
-          stat   = "p95"
-          metrics = [
-            ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-api-call"],
-            ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-preprocessing"],
-            ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-save"],
-          ]
-        }
-      }
-    ]
+    widgets = concat(
+      [
+        {
+          type   = "metric"
+          x      = 0
+          y      = 0
+          width  = 12
+          height = 6
+          properties = {
+            title  = "Lambda Invocations & Errors"
+            region = var.aws_region
+            period = 300
+            stat   = "Sum"
+            metrics = [
+              ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-api-call"],
+              ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-api-call"],
+              ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-preprocessing"],
+              ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-preprocessing"],
+              ["AWS/Lambda", "Invocations", "FunctionName", "${var.name}-save"],
+              ["AWS/Lambda", "Errors", "FunctionName", "${var.name}-save"],
+            ]
+          }
+        },
+      ],
+      var.step_functions_state_machine_arn != "" ? [
+        {
+          type   = "metric"
+          x      = 12
+          y      = 0
+          width  = 12
+          height = 6
+          properties = {
+            title  = "Step Functions Executions"
+            region = var.aws_region
+            period = 300
+            stat   = "Sum"
+            metrics = [
+              ["AWS/States", "ExecutionsStarted", "StateMachineArn", var.step_functions_state_machine_arn],
+              ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", var.step_functions_state_machine_arn],
+              ["AWS/States", "ExecutionsFailed", "StateMachineArn", var.step_functions_state_machine_arn],
+            ]
+          }
+        },
+      ] : [],
+      [
+        {
+          type   = "metric"
+          x      = 0
+          y      = 6
+          width  = 12
+          height = 6
+          properties = {
+            title  = "DynamoDB Requests"
+            region = var.aws_region
+            period = 300
+            stat   = "Sum"
+            metrics = [
+              ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${var.name}-surf-data"],
+              ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name}-surf-data"],
+            ]
+          }
+        },
+        {
+          type   = "metric"
+          x      = 12
+          y      = 6
+          width  = 12
+          height = 6
+          properties = {
+            title  = "Lambda Duration (P95)"
+            region = var.aws_region
+            period = 300
+            stat   = "p95"
+            metrics = [
+              ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-api-call"],
+              ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-preprocessing"],
+              ["AWS/Lambda", "Duration", "FunctionName", "${var.name}-save"],
+            ]
+          }
+        },
+      ]
+    )
   })
 }

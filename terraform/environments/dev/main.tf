@@ -63,6 +63,8 @@ module "iam" {
   account_id      = data.aws_caller_identity.current.account_id
   bucket_datalake = module.s3.bucket_datalake
   bucket_ml       = module.s3.bucket_ml
+  github_org      = var.github_org
+  github_repo     = var.github_repo
 }
 
 # =============================================================================
@@ -87,8 +89,12 @@ module "lambda" {
   lambda_execution_role_arn = module.iam.lambda_execution_role_arn
   s3_bucket_datalake        = module.s3.bucket_datalake
   s3_bucket_ml              = module.s3.bucket_ml
-  dynamodb_table_surf_data  = module.dynamodb.table_surf_data_name
+  dynamodb_table_surf_info  = module.dynamodb.table_surf_info_name
   sns_alerts_topic_arn      = module.sns.alerts_topic_arn
+  bedrock_model_id          = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+  vpc_id                    = module.networking.vpc_id
+  private_subnet_ids        = module.networking.private_subnet_ids
+  elasticache_endpoint      = module.elasticache.primary_endpoint
 }
 
 # =============================================================================
@@ -138,10 +144,20 @@ module "sagemaker" {
 module "cloudwatch" {
   source = "../../modules/cloudwatch"
 
-  name                             = local.name
-  aws_region                       = var.aws_region
-  sns_alerts_topic_arn             = module.sns.alerts_topic_arn
-  step_functions_state_machine_arn = module.step_functions.state_machine_arn
+  name                 = local.name
+  aws_region           = var.aws_region
+  sns_alerts_topic_arn = module.sns.alerts_topic_arn
+  # step_functions_state_machine_arn: connected in Phase 3 after step_functions is applied
+}
+
+# =============================================================================
+# X-Ray (Tracing)
+# =============================================================================
+
+module "xray" {
+  source = "../../modules/xray"
+
+  name = local.name
 }
 
 # =============================================================================
@@ -154,6 +170,80 @@ module "eks" {
   name               = local.name
   vpc_id             = module.networking.vpc_id
   private_subnet_ids = module.networking.private_subnet_ids
+  account_id         = data.aws_caller_identity.current.account_id
+}
+
+# =============================================================================
+# EKS Add-ons: AWS Load Balancer Controller
+# =============================================================================
+
+resource "helm_release" "lb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = "1.8.1"
+  namespace  = "kube-system"
+
+  set {
+    name  = "clusterName"
+    value = module.eks.cluster_name
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.eks.lb_controller_role_arn
+  }
+
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "vpcId"
+    value = module.networking.vpc_id
+  }
+
+  depends_on = [module.eks]
+}
+
+# =============================================================================
+# EKS Add-ons: Metrics Server (for HPA)
+# =============================================================================
+
+resource "helm_release" "metrics_server" {
+  name       = "metrics-server"
+  repository = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart      = "metrics-server"
+  version    = "3.12.1"
+  namespace  = "kube-system"
+
+  depends_on = [module.eks]
+}
+
+# =============================================================================
+# Kubernetes Namespace
+# =============================================================================
+
+resource "kubernetes_namespace" "awaves" {
+  metadata {
+    name = "${local.name}"
+    labels = {
+      name = "${local.name}"
+    }
+  }
+
+  depends_on = [module.eks]
 }
 
 # =============================================================================
@@ -180,4 +270,20 @@ module "elasticache" {
   vpc_id               = module.networking.vpc_id
   private_subnet_cidrs = var.private_subnet_cidrs
   database_subnet_ids  = module.networking.database_subnet_ids
+}
+
+# =============================================================================
+# CloudFront (S3 frontend origin, ALB API origin 추후 추가)
+# =============================================================================
+
+module "cloudfront" {
+  source = "../../modules/cloudfront"
+
+  name                             = local.name
+  s3_bucket_id                     = module.s3.bucket_frontend
+  s3_bucket_arn                    = module.s3.bucket_frontend_arn
+  s3_bucket_regional_domain_name   = module.s3.bucket_frontend_regional_domain_name
+  # alb_dns_name: EKS Ingress 배포 후 추가
+  # domain_name: Route 53 도메인 연결 시 추가
+  # acm_certificate_arn: ACM 인증서 발급 후 추가
 }

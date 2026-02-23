@@ -42,3 +42,13 @@ output "save_function_name" {
   description = "Name of the Save Lambda function"
   value       = aws_lambda_function.save.function_name
 }
+
+output "bedrock_summary_arn" {
+  description = "ARN of the Bedrock Summary Lambda function"
+  value       = aws_lambda_function.bedrock_summary.arn
+}
+
+output "bedrock_summary_function_name" {
+  description = "Name of the Bedrock Summary Lambda function"
+  value       = aws_lambda_function.bedrock_summary.function_name
+}

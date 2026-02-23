@@ -14,23 +14,35 @@ variable "account_id" {
 }
 
 variable "bucket_datalake" {
-  description = "Datalake S3 bucket name"
+  description = "Datalake S3 bucket name (data-raw)"
   type        = string
 }
 
 variable "bucket_ml" {
-  description = "ML S3 bucket name"
+  description = "ML S3 bucket name (sagemaker-artifacts)"
   type        = string
 }
 
-variable "infra_users" {
-  description = "IAM usernames for the infra group (MLOps & Infra)"
+variable "platform_users" {
+  description = "IAM usernames for the platform group (MLOps & Infra)"
   type        = list(string)
   default     = ["awaves-jkwon", "awaves-mudd"]
 }
 
-variable "dev_users" {
-  description = "IAM usernames for the dev group (FE/BE)"
+variable "app_users" {
+  description = "IAM usernames for the app group (FE/BE/Data Analysis)"
   type        = list(string)
   default     = ["awaves-bhgdwn", "awaves-jlee", "awaves-hpark"]
+}
+
+variable "github_org" {
+  description = "GitHub organization name for OIDC trust"
+  type        = string
+  default     = "awaves-project"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name for OIDC trust"
+  type        = string
+  default     = "awaves"
 }

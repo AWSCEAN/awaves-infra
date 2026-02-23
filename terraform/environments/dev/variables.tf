@@ -51,3 +51,15 @@ variable "alb_dns_name" {
   type        = string
   default     = ""
 }
+
+variable "github_org" {
+  description = "GitHub organization name for CI/CD OIDC trust"
+  type        = string
+  default     = "awaves-project"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name for CI/CD OIDC trust"
+  type        = string
+  default     = "awaves"
+}

@@ -12,3 +12,8 @@ variable "private_subnet_ids" {
   description = "List of private subnet IDs for EKS nodes"
   type        = list(string)
 }
+
+variable "account_id" {
+  description = "AWS account ID for access entry ARNs"
+  type        = string
+}

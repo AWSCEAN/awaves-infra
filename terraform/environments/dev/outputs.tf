@@ -77,14 +77,14 @@ output "s3_bucket_ml" {
 # DynamoDB Tables
 # =============================================================================
 
-output "dynamodb_table_surf_data_name" {
-  description = "Name of the surf data DynamoDB table"
-  value       = module.dynamodb.table_surf_data_name
+output "dynamodb_table_surf_info_name" {
+  description = "Name of the surf info DynamoDB table"
+  value       = module.dynamodb.table_surf_info_name
 }
 
-output "dynamodb_table_surf_data_arn" {
-  description = "ARN of the surf data DynamoDB table"
-  value       = module.dynamodb.table_surf_data_arn
+output "dynamodb_table_surf_info_arn" {
+  description = "ARN of the surf info DynamoDB table"
+  value       = module.dynamodb.table_surf_info_arn
 }
 
 output "dynamodb_table_saved_list_name" {

@@ -9,8 +9,9 @@ variable "sns_alerts_topic_arn" {
 }
 
 variable "step_functions_state_machine_arn" {
-  description = "ARN of the Step Functions state machine"
+  description = "ARN of the Step Functions state machine (optional; alarm skipped if empty)"
   type        = string
+  default     = ""
 }
 
 variable "aws_region" {
