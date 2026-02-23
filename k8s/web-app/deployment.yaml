@@ -15,6 +15,7 @@ spec:
       labels:
         app: web-app
     spec:
+      serviceAccountName: web-app
       containers:
         - name: web-app
           image: 107570140649.dkr.ecr.us-east-1.amazonaws.com/awaves-dev-web-app:latest

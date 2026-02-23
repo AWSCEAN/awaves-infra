@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: awaves-dev
+  labels:
+    app: backend-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      serviceAccountName: backend-api
+      containers:
+        - name: backend-api
+          image: 107570140649.dkr.ecr.us-east-1.amazonaws.com/awaves-dev-backend-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ENV
+              value: "production"
+            - name: PORT
+              value: "8000"
+            - name: DEBUG
+              value: "false"
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-api-secret
+                  key: database_url
+            - name: CACHE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-api-secret
+                  key: cache_url
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
