@@ -166,11 +166,12 @@ resource "aws_lambda_function" "save" {
 
   environment {
     variables = {
-      ENVIRONMENT          = var.environment
-      S3_BUCKET_DATALAKE   = var.s3_bucket_datalake
-      DYNAMODB_TABLE       = var.dynamodb_table_surf_info
-      ELASTICACHE_ENDPOINT = var.elasticache_endpoint
-      MODEL_VERSION        = var.model_version
+      ENVIRONMENT               = var.environment
+      S3_BUCKET_DATALAKE        = var.s3_bucket_datalake
+      DYNAMODB_TABLE            = var.dynamodb_table_surf_info
+      DYNAMODB_SAVED_LIST_TABLE = var.dynamodb_table_saved_list
+      ELASTICACHE_ENDPOINT      = var.elasticache_endpoint
+      MODEL_VERSION             = var.model_version
     }
   }
 
@@ -344,8 +345,8 @@ resource "aws_cloudwatch_event_rule" "model_approved" {
     source      = ["aws.sagemaker"]
     detail-type = ["SageMaker Model Package State Change"]
     detail = {
-      ModelApprovalStatus    = ["Approved"]
-      ModelPackageGroupName  = [var.hourly_model_package_group_name]
+      ModelApprovalStatus   = ["Approved"]
+      ModelPackageGroupName = [var.hourly_model_package_group_name]
     }
   })
 

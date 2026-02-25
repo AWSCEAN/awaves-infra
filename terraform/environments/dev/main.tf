@@ -90,6 +90,7 @@ module "lambda" {
   s3_bucket_datalake        = module.s3.bucket_datalake
   s3_bucket_ml              = module.s3.bucket_ml
   dynamodb_table_surf_info  = module.dynamodb.table_surf_info_name
+  dynamodb_table_saved_list = module.dynamodb.table_saved_list_name
   sns_alerts_topic_arn      = module.sns.alerts_topic_arn
   bedrock_model_id          = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
   vpc_id                    = module.networking.vpc_id
@@ -145,7 +146,7 @@ module "sagemaker" {
   lambda_alert_ml_pipeline_arn = module.lambda.alert_ml_pipeline_arn
   # Set after first training run, e.g.:
   # model_data_url = "s3://awaves-ml-dev/models/<job-name>/output/model.tar.gz"
-  model_data_url               = var.sagemaker_model_data_url
+  model_data_url = var.sagemaker_model_data_url
 
   depends_on = [module.lambda]
 }
@@ -250,7 +251,7 @@ resource "helm_release" "metrics_server" {
 
 resource "kubernetes_namespace" "awaves" {
   metadata {
-    name = "${local.name}"
+    name = local.name
     labels = {
       name = "${local.name}"
     }
@@ -331,13 +332,13 @@ module "acm" {
 module "cloudfront" {
   source = "../../modules/cloudfront"
 
-  name                             = local.name
-  s3_bucket_id                     = module.s3.bucket_frontend
-  s3_bucket_arn                    = module.s3.bucket_frontend_arn
-  s3_bucket_regional_domain_name   = module.s3.bucket_frontend_regional_domain_name
-  domain_names                     = [var.domain_name, "www.${var.domain_name}"]
-  acm_certificate_arn              = module.acm.certificate_arn
-  # alb_dns_name: EKS Ingress 배포 후 추가
+  name                           = local.name
+  s3_bucket_id                   = module.s3.bucket_frontend
+  s3_bucket_arn                  = module.s3.bucket_frontend_arn
+  s3_bucket_regional_domain_name = module.s3.bucket_frontend_regional_domain_name
+  domain_names                   = [var.domain_name, "www.${var.domain_name}"]
+  acm_certificate_arn            = module.acm.certificate_arn
+  alb_dns_name                   = var.alb_dns_name
 }
 
 # =============================================================================

@@ -28,6 +28,11 @@ variable "dynamodb_table_surf_info" {
   type        = string
 }
 
+variable "dynamodb_table_saved_list" {
+  description = "Saved list DynamoDB table name"
+  type        = string
+}
+
 variable "elasticache_endpoint" {
   description = "ElastiCache primary endpoint address"
   type        = string

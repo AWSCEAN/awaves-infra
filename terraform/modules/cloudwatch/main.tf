@@ -181,8 +181,8 @@ resource "aws_cloudwatch_dashboard" "awaves" {
             period = 300
             stat   = "Sum"
             metrics = [
-              ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${var.name}-surf-data"],
-              ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name}-surf-data"],
+              ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${var.name}-surf-info"],
+              ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name}-surf-info"],
             ]
           }
         },
