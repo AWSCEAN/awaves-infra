@@ -39,7 +39,7 @@ ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 ELASTICACHE_ENDPOINT = os.environ.get("ELASTICACHE_ENDPOINT", "")
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "awaves-v1")
 
-CACHE_TTL_SECONDS = 3 * 3600  # 3 hours
+
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -100,10 +100,10 @@ def _parse_geo(location_id):
 
 
 def _expired_at(surf_timestamp_str):
-    """TTL = surfTimestamp + 7 days as Unix timestamp (DynamoDB TTL)."""
+    """TTL = surfTimestamp + 9 hours as Unix timestamp (DynamoDB TTL)."""
     try:
         dt = datetime.fromisoformat(surf_timestamp_str.replace("Z", "+00:00"))
-        return int((dt + timedelta(days=7)).timestamp())
+        return int((dt + timedelta(hours=9)).timestamp())
     except Exception:
         return None
 
@@ -225,6 +225,8 @@ def handler(event, context):
                                 "surfGradeBeg": _surf_grade(y_beg),
                                 "waveHeight": float(row.get("wave_height") or 0),
                                 "wavePeriod": float(row.get("wave_period") or 0),
+                                "windSpeed": float(row.get("wind_speed_10m") or 0),
+                                "waterTemperature": float(row.get("sea_surface_temperature") or 0),
                                 "lastUpdated": created_at,
                             })
                 except Exception:
@@ -242,7 +244,7 @@ def handler(event, context):
                 pipe.set(
                     f"awaves:surf:latest:{location_id}",
                     json.dumps(cache_data),
-                    ex=CACHE_TTL_SECONDS,
+                    ex=10800,  # TTL 3h
                 )
                 cache_written += 1
             pipe.execute()

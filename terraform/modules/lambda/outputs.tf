@@ -52,3 +52,13 @@ output "bedrock_summary_function_name" {
   description = "Name of the Bedrock Summary Lambda function"
   value       = aws_lambda_function.bedrock_summary.function_name
 }
+
+output "cache_invalidation_arn" {
+  description = "ARN of the Cache Invalidation Lambda function"
+  value       = aws_lambda_function.cache_invalidation.arn
+}
+
+output "cache_invalidation_function_name" {
+  description = "Name of the Cache Invalidation Lambda function"
+  value       = aws_lambda_function.cache_invalidation.function_name
+}

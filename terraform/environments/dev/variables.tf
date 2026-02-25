@@ -52,14 +52,26 @@ variable "alb_dns_name" {
   default     = ""
 }
 
+variable "domain_name" {
+  description = "Root domain name for the service (e.g. awaves.net)"
+  type        = string
+  default     = "awaves.net"
+}
+
 variable "github_org" {
   description = "GitHub organization name for CI/CD OIDC trust"
   type        = string
-  default     = "awaves-project"
+  default     = "AWSCEAN"
 }
 
 variable "github_repo" {
   description = "GitHub repository name for CI/CD OIDC trust"
   type        = string
-  default     = "awaves"
+  default     = "awaves-agent"
+}
+
+variable "sagemaker_model_data_url" {
+  description = "S3 URI of trained model artifact (model.tar.gz). Set after first training run to deploy the real-time endpoint."
+  type        = string
+  default     = ""
 }

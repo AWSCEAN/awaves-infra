@@ -77,3 +77,47 @@ resource "aws_vpc_endpoint" "dynamodb" {
     Name = "${var.name}-dynamodb-endpoint"
   }
 }
+
+# =============================================================================
+# VPC Interface Endpoint: SageMaker Runtime
+# Allows EKS pods to invoke SageMaker Endpoints without leaving the VPC.
+# Interface endpoint: ~$0.01/AZ-hour — using 1 AZ (private subnet[0]) for cost.
+# =============================================================================
+
+resource "aws_security_group" "sagemaker_endpoint" {
+  name        = "${var.name}-sagemaker-vpce"
+  description = "SageMaker Runtime VPC Interface endpoint"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description = "HTTPS from VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.name}-sagemaker-vpce"
+  }
+}
+
+resource "aws_vpc_endpoint" "sagemaker_runtime" {
+  vpc_id              = module.vpc.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.sagemaker.runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [module.vpc.private_subnets[0]]
+  security_group_ids  = [aws_security_group.sagemaker_endpoint.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.name}-sagemaker-runtime-endpoint"
+  }
+}

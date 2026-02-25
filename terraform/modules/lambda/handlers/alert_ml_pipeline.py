@@ -30,7 +30,9 @@ sns = boto3.client("sns")
 
 
 def handler(event, context):
-    evaluation_result = event.get("evaluation_result", "unknown")
+    # This Lambda is invoked only from the SageMaker Pipeline ElseSteps
+    # (QWK below threshold), so evaluation_result defaults to "bad".
+    evaluation_result = event.get("evaluation_result", "bad")
     model_version = event.get("model_version", "unknown")
     metrics = event.get("metrics", {})
 

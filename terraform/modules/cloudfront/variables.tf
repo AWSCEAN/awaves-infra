@@ -30,10 +30,10 @@ variable "alb_dns_name" {
   default     = ""
 }
 
-variable "domain_name" {
-  description = "Custom domain name (e.g. awaves.com). Leave empty to use CloudFront default domain."
-  type        = string
-  default     = ""
+variable "domain_names" {
+  description = "Custom domain names for CloudFront aliases (e.g. [\"awaves.net\", \"www.awaves.net\"]). Leave empty to use CloudFront default domain."
+  type        = list(string)
+  default     = []
 }
 
 variable "acm_certificate_arn" {

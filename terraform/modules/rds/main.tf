@@ -15,6 +15,17 @@ resource "aws_security_group" "aurora" {
     cidr_blocks = var.private_subnet_cidrs
   }
 
+  dynamic "ingress" {
+    for_each = length(var.extra_ingress_cidrs) > 0 ? [1] : []
+    content {
+      description = "PostgreSQL from extra CIDRs (testing)"
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      cidr_blocks = var.extra_ingress_cidrs
+    }
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

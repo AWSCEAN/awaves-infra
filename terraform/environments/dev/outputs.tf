@@ -54,6 +54,11 @@ output "vpc_endpoint_dynamodb_id" {
   value       = module.networking.vpc_endpoint_dynamodb_id
 }
 
+output "vpc_endpoint_sagemaker_runtime_id" {
+  description = "ID of the SageMaker Runtime VPC Interface endpoint"
+  value       = module.networking.vpc_endpoint_sagemaker_runtime_id
+}
+
 # =============================================================================
 # S3 Buckets
 # =============================================================================
@@ -176,6 +181,16 @@ output "sagemaker_model_package_group_name" {
   value       = module.sagemaker.model_package_group_name
 }
 
+output "sagemaker_endpoint_name" {
+  description = "SageMaker real-time endpoint name (empty until model_data_url is set)"
+  value       = module.sagemaker.endpoint_name
+}
+
+output "sagemaker_endpoint_url" {
+  description = "SageMaker runtime invocation URL"
+  value       = module.sagemaker.endpoint_url
+}
+
 # =============================================================================
 # CloudWatch
 # =============================================================================
@@ -183,4 +198,27 @@ output "sagemaker_model_package_group_name" {
 output "cloudwatch_dashboard_name" {
   description = "CloudWatch dashboard name"
   value       = module.cloudwatch.dashboard_name
+}
+
+# =============================================================================
+# Route 53
+# =============================================================================
+
+output "route53_zone_id" {
+  description = "Route 53 hosted zone ID"
+  value       = module.route53.zone_id
+}
+
+# =============================================================================
+# CloudFront
+# =============================================================================
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID"
+  value       = module.cloudfront.distribution_id
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront distribution domain name (e.g. d1234.cloudfront.net)"
+  value       = module.cloudfront.domain_name
 }

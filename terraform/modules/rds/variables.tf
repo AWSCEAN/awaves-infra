@@ -17,3 +17,9 @@ variable "database_subnet_group_name" {
   description = "Name of the database subnet group"
   type        = string
 }
+
+variable "extra_ingress_cidrs" {
+  description = "Additional CIDR blocks allowed to connect to Aurora (e.g. developer IPs for testing)"
+  type        = list(string)
+  default     = []
+}

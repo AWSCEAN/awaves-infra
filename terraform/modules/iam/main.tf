@@ -41,18 +41,35 @@ resource "aws_iam_policy" "lambda_s3_access" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:ListBucket"
-      ]
-      Resource = [
-        "arn:aws:s3:::${var.bucket_datalake}",
-        "arn:aws:s3:::${var.bucket_datalake}/*"
-      ]
-    }]
+    Statement = [
+      {
+        Sid    = "DatalakeBucketAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.bucket_datalake}",
+          "arn:aws:s3:::${var.bucket_datalake}/*"
+        ]
+      },
+      {
+        # drift_detection Lambda: read baseline.json, write drift reports
+        Sid    = "MLBucketAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.bucket_ml}",
+          "arn:aws:s3:::${var.bucket_ml}/*"
+        ]
+      },
+    ]
   })
 }
 
@@ -130,6 +147,30 @@ resource "aws_iam_policy" "lambda_bedrock_access" {
 resource "aws_iam_role_policy_attachment" "lambda_bedrock" {
   role       = aws_iam_role.lambda_execution.name
   policy_arn = aws_iam_policy.lambda_bedrock_access.arn
+}
+
+resource "aws_iam_policy" "lambda_sagemaker_pipeline" {
+  name = "${var.name}-lambda-sagemaker-pipeline"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      # drift_detection Lambda: trigger retraining pipeline when isDrift=true
+      Sid    = "SageMakerPipelineTrigger"
+      Effect = "Allow"
+      Action = [
+        "sagemaker:StartPipelineExecution",
+        "sagemaker:DescribePipelineExecution",
+        "sagemaker:ListPipelineExecutions",
+      ]
+      Resource = "arn:aws:sagemaker:${var.aws_region}:${var.account_id}:pipeline/${var.name}-training"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_sagemaker_pipeline" {
+  role       = aws_iam_role.lambda_execution.name
+  policy_arn = aws_iam_policy.lambda_sagemaker_pipeline.arn
 }
 
 # -----------------------------------------------------------------------------
@@ -214,6 +255,28 @@ resource "aws_iam_role_policy_attachment" "sagemaker_cloudwatch" {
 resource "aws_iam_role_policy_attachment" "sagemaker_full_access" {
   role       = aws_iam_role.sagemaker_execution.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+}
+
+resource "aws_iam_policy" "sagemaker_lambda_invoke" {
+  name = "${var.name}-sagemaker-lambda-invoke"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "LambdaInvokeForPipeline"
+      Effect = "Allow"
+      Action = [
+        "lambda:InvokeFunction",
+        "lambda:GetFunction",
+      ]
+      Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:${var.name}-*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_lambda_invoke" {
+  role       = aws_iam_role.sagemaker_execution.name
+  policy_arn = aws_iam_policy.sagemaker_lambda_invoke.arn
 }
 
 # =============================================================================
@@ -317,33 +380,10 @@ resource "aws_iam_policy" "app_admin" {
         Resource = "*"
       },
       {
-        Sid    = "ECRAppAccess"
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken"
-        ]
+        Sid      = "ECRFullAccess"
+        Effect   = "Allow"
+        Action   = ["ecr:*"]
         Resource = "*"
-      },
-      {
-        Sid    = "ECRAppRepos"
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:PutImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-          "ecr:DescribeImages",
-          "ecr:DescribeRepositories",
-          "ecr:ListImages"
-        ]
-        Resource = [
-          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-web-app",
-          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-mobile-app",
-          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-backend-api"
-        ]
       },
       {
         Sid    = "CloudWatchLogsAccess"
@@ -407,22 +447,27 @@ resource "aws_iam_policy" "app_readonly" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "LambdaRead"
-        Effect = "Allow"
-        Action = [
-          "lambda:ListFunctions",
-          "lambda:GetFunction",
-          "lambda:GetPolicy",
-          "lambda:ListVersionsByFunction",
-          "lambda:ListAliases"
-        ]
+        Sid      = "LambdaList"
+        Effect   = "Allow"
+        Action   = ["lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid      = "LambdaRead"
+        Effect   = "Allow"
+        Action   = ["lambda:GetFunction", "lambda:GetPolicy"]
         Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:${var.name}-*"
+      },
+      {
+        Sid      = "StepFunctionsList"
+        Effect   = "Allow"
+        Action   = ["states:ListStateMachines"]
+        Resource = "*"
       },
       {
         Sid    = "StepFunctionsRead"
         Effect = "Allow"
         Action = [
-          "states:ListStateMachines",
           "states:DescribeStateMachine",
           "states:ListExecutions",
           "states:DescribeExecution",
@@ -465,7 +510,7 @@ resource "aws_iam_policy" "app_readonly" {
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams"
         ]
-        Resource = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${var.name}-*"
+        Resource = "*"
       },
       {
         Sid    = "DynamoDBRead"
@@ -477,6 +522,120 @@ resource "aws_iam_policy" "app_readonly" {
           "dynamodb:DescribeTable"
         ]
         Resource = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-*"
+      },
+      {
+        Sid      = "DynamoDBListRead"
+        Effect   = "Allow"
+        Action   = ["dynamodb:ListTables"]
+        Resource = "*"
+      },
+      {
+        Sid      = "VPCRead"
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "EKSRead"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster", "eks:ListClusters",
+          "eks:DescribeNodegroup", "eks:ListNodegroups",
+          "eks:DescribeAddon", "eks:ListAddons"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "RDSRead"
+        Effect   = "Allow"
+        Action   = ["rds:Describe*", "rds:List*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ElastiCacheRead"
+        Effect   = "Allow"
+        Action   = ["elasticache:Describe*", "elasticache:List*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "S3ListAllBuckets"
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets"]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3Read"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:ListBucket",
+          "s3:GetBucketLocation", "s3:GetBucketVersioning"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.name}-*",
+          "arn:aws:s3:::${var.name}-*/*"
+        ]
+      },
+      {
+        Sid      = "SageMakerRead"
+        Effect   = "Allow"
+        Action   = ["sagemaker:Describe*", "sagemaker:List*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchMetricsRead"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:GetMetricStatistics",
+          "cloudwatch:ListMetrics",
+          "cloudwatch:DescribeAlarms"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SNSRead"
+        Effect = "Allow"
+        Action = [
+          "sns:ListTopics", "sns:GetTopicAttributes",
+          "sns:ListSubscriptions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudFrontRead"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:GetDistribution",
+          "cloudfront:ListDistributions",
+          "cloudfront:GetDistributionConfig"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "Route53Read"
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones", "route53:ListResourceRecordSets",
+          "route53:GetHostedZone", "route53:ListHealthChecks",
+          "route53:GetHealthCheck"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "KMSRead"
+        Effect   = "Allow"
+        Action   = ["kms:ListKeys", "kms:DescribeKey", "kms:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMRead"
+        Effect = "Allow"
+        Action = [
+          "iam:ListRoles", "iam:ListUsers", "iam:ListGroups",
+          "iam:ListPolicies", "iam:GetRole", "iam:GetPolicy",
+          "iam:GetPolicyVersion", "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies", "iam:GetRolePolicy"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -670,9 +829,9 @@ resource "aws_iam_policy" "infra_readonly" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "VPCRead"
-        Effect = "Allow"
-        Action = ["ec2:Describe*"]
+        Sid      = "VPCRead"
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*"]
         Resource = "*"
       },
       {
@@ -689,15 +848,21 @@ resource "aws_iam_policy" "infra_readonly" {
         Resource = "*"
       },
       {
-        Sid    = "RDSRead"
-        Effect = "Allow"
-        Action = ["rds:Describe*", "rds:List*"]
+        Sid      = "RDSRead"
+        Effect   = "Allow"
+        Action   = ["rds:Describe*", "rds:List*"]
         Resource = "*"
       },
       {
-        Sid    = "ElastiCacheRead"
-        Effect = "Allow"
-        Action = ["elasticache:Describe*", "elasticache:List*"]
+        Sid      = "ElastiCacheRead"
+        Effect   = "Allow"
+        Action   = ["elasticache:Describe*", "elasticache:List*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "S3ListAllBuckets"
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets"]
         Resource = "*"
       },
       {
@@ -718,6 +883,123 @@ resource "aws_iam_policy" "infra_readonly" {
           "route53:GetHostedZone",
           "route53:ListHealthChecks",
           "route53:GetHealthCheck"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "LambdaList"
+        Effect   = "Allow"
+        Action   = ["lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid      = "LambdaRead"
+        Effect   = "Allow"
+        Action   = ["lambda:GetFunction", "lambda:GetPolicy"]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:${var.name}-*"
+      },
+      {
+        Sid      = "StepFunctionsList"
+        Effect   = "Allow"
+        Action   = ["states:ListStateMachines"]
+        Resource = "*"
+      },
+      {
+        Sid    = "StepFunctionsRead"
+        Effect = "Allow"
+        Action = [
+          "states:DescribeStateMachine",
+          "states:ListExecutions", "states:DescribeExecution",
+          "states:GetExecutionHistory"
+        ]
+        Resource = "arn:aws:states:${var.aws_region}:${var.account_id}:stateMachine:${var.name}-*"
+      },
+      {
+        Sid    = "EventBridgeRead"
+        Effect = "Allow"
+        Action = [
+          "events:ListRules", "events:DescribeRule",
+          "events:ListTargetsByRule",
+          "scheduler:ListSchedules", "scheduler:GetSchedule"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRRead"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
+          "ecr:DescribeImages", "ecr:DescribeRepositories",
+          "ecr:ListImages"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DynamoDBRead"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:Query",
+          "dynamodb:Scan", "dynamodb:DescribeTable"
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-*"
+      },
+      {
+        Sid      = "DynamoDBListRead"
+        Effect   = "Allow"
+        Action   = ["dynamodb:ListTables"]
+        Resource = "*"
+      },
+      {
+        Sid      = "SageMakerRead"
+        Effect   = "Allow"
+        Action   = ["sagemaker:Describe*", "sagemaker:List*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchRead"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:GetMetricStatistics", "cloudwatch:ListMetrics",
+          "cloudwatch:DescribeAlarms",
+          "logs:GetLogEvents", "logs:FilterLogEvents",
+          "logs:DescribeLogGroups", "logs:DescribeLogStreams"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SNSRead"
+        Effect = "Allow"
+        Action = [
+          "sns:ListTopics", "sns:GetTopicAttributes",
+          "sns:ListSubscriptions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudFrontRead"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:GetDistribution",
+          "cloudfront:ListDistributions",
+          "cloudfront:GetDistributionConfig"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "KMSRead"
+        Effect   = "Allow"
+        Action   = ["kms:ListKeys", "kms:DescribeKey", "kms:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMRead"
+        Effect = "Allow"
+        Action = [
+          "iam:ListRoles", "iam:ListUsers", "iam:ListGroups",
+          "iam:ListPolicies", "iam:GetRole", "iam:GetPolicy",
+          "iam:GetPolicyVersion", "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies", "iam:GetRolePolicy"
         ]
         Resource = "*"
       }
@@ -839,9 +1121,9 @@ resource "aws_iam_policy" "ml_admin" {
         Resource = "*"
       },
       {
-        Sid    = "IAMPassRoleML"
-        Effect = "Allow"
-        Action = ["iam:PassRole"]
+        Sid      = "IAMPassRoleML"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
         Resource = [aws_iam_role.sagemaker_execution.arn]
       }
     ]
@@ -884,6 +1166,12 @@ resource "aws_iam_policy" "ml_readonly" {
         Resource = "*"
       },
       {
+        Sid      = "S3ListAllBuckets"
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets"]
+        Resource = "*"
+      },
+      {
         Sid    = "S3MLRead"
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"]
@@ -907,6 +1195,156 @@ resource "aws_iam_policy" "ml_readonly" {
           "logs:DescribeLogStreams"
         ]
         Resource = "*"
+      },
+      {
+        Sid      = "VPCRead"
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "EKSRead"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster", "eks:ListClusters",
+          "eks:DescribeNodegroup", "eks:ListNodegroups",
+          "eks:DescribeAddon", "eks:ListAddons"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "RDSRead"
+        Effect   = "Allow"
+        Action   = ["rds:Describe*", "rds:List*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ElastiCacheRead"
+        Effect   = "Allow"
+        Action   = ["elasticache:Describe*", "elasticache:List*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3AllRead"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:ListBucket",
+          "s3:GetBucketLocation", "s3:GetBucketVersioning"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.name}-*",
+          "arn:aws:s3:::${var.name}-*/*"
+        ]
+      },
+      {
+        Sid    = "DynamoDBRead"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:Query",
+          "dynamodb:Scan", "dynamodb:DescribeTable"
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-*"
+      },
+      {
+        Sid      = "DynamoDBListRead"
+        Effect   = "Allow"
+        Action   = ["dynamodb:ListTables"]
+        Resource = "*"
+      },
+      {
+        Sid      = "LambdaList"
+        Effect   = "Allow"
+        Action   = ["lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid      = "LambdaRead"
+        Effect   = "Allow"
+        Action   = ["lambda:GetFunction", "lambda:GetPolicy"]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:${var.name}-*"
+      },
+      {
+        Sid      = "StepFunctionsList"
+        Effect   = "Allow"
+        Action   = ["states:ListStateMachines"]
+        Resource = "*"
+      },
+      {
+        Sid    = "StepFunctionsRead"
+        Effect = "Allow"
+        Action = [
+          "states:DescribeStateMachine",
+          "states:ListExecutions", "states:DescribeExecution",
+          "states:GetExecutionHistory"
+        ]
+        Resource = "arn:aws:states:${var.aws_region}:${var.account_id}:stateMachine:${var.name}-*"
+      },
+      {
+        Sid    = "EventBridgeRead"
+        Effect = "Allow"
+        Action = [
+          "events:ListRules", "events:DescribeRule",
+          "events:ListTargetsByRule",
+          "scheduler:ListSchedules", "scheduler:GetSchedule"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRRead"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
+          "ecr:DescribeImages", "ecr:DescribeRepositories",
+          "ecr:ListImages"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SNSRead"
+        Effect = "Allow"
+        Action = [
+          "sns:ListTopics", "sns:GetTopicAttributes",
+          "sns:ListSubscriptions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudFrontRead"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:GetDistribution",
+          "cloudfront:ListDistributions",
+          "cloudfront:GetDistributionConfig"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "Route53Read"
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones", "route53:ListResourceRecordSets",
+          "route53:GetHostedZone", "route53:ListHealthChecks",
+          "route53:GetHealthCheck"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "KMSRead"
+        Effect   = "Allow"
+        Action   = ["kms:ListKeys", "kms:DescribeKey", "kms:ListAliases"]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMRead"
+        Effect = "Allow"
+        Action = [
+          "iam:ListRoles", "iam:ListUsers", "iam:ListGroups",
+          "iam:ListPolicies", "iam:GetRole", "iam:GetPolicy",
+          "iam:GetPolicyVersion", "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies", "iam:GetRolePolicy"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -918,93 +1356,95 @@ resource "aws_iam_role_policy_attachment" "ml_readonly" {
 }
 
 # =============================================================================
-# Section 3: CI/CD OIDC Role (GitHub Actions) — TODO: uncomment when ready
+# Section 3: CI/CD OIDC Role (GitHub Actions)
 # =============================================================================
 
-# data "aws_iam_openid_connect_provider" "github" {
-#   url = "https://token.actions.githubusercontent.com"
-# }
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+}
 
-# resource "aws_iam_role" "cicd" {
-#   name = "${var.name}-cicd-role"
-#
-#   assume_role_policy = jsonencode({
-#     Version = "2012-10-17"
-#     Statement = [{
-#       Action = "sts:AssumeRoleWithWebIdentity"
-#       Effect = "Allow"
-#       Principal = {
-#         Federated = data.aws_iam_openid_connect_provider.github.arn
-#       }
-#       Condition = {
-#         StringLike = {
-#           "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"
-#         }
-#         StringEquals = {
-#           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-#         }
-#       }
-#     }]
-#   })
-#
-#   tags = { Name = "${var.name}-cicd-role" }
-# }
+resource "aws_iam_role" "cicd" {
+  name = "${var.name}-cicd-role"
 
-# resource "aws_iam_policy" "cicd" {
-#   name = "${var.name}-cicd-policy"
-#
-#   policy = jsonencode({
-#     Version = "2012-10-17"
-#     Statement = [
-#       {
-#         Sid    = "ECRAuth"
-#         Effect = "Allow"
-#         Action = ["ecr:GetAuthorizationToken"]
-#         Resource = "*"
-#       },
-#       {
-#         Sid    = "ECRPush"
-#         Effect = "Allow"
-#         Action = [
-#           "ecr:BatchGetImage",
-#           "ecr:BatchCheckLayerAvailability",
-#           "ecr:PutImage",
-#           "ecr:InitiateLayerUpload",
-#           "ecr:UploadLayerPart",
-#           "ecr:CompleteLayerUpload",
-#           "ecr:GetDownloadUrlForLayer",
-#           "ecr:DescribeImages",
-#           "ecr:DescribeRepositories"
-#         ]
-#         Resource = [
-#           "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-web-app",
-#           "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-mobile-app",
-#           "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-backend-api"
-#         ]
-#       },
-#       {
-#         Sid    = "EKSDescribe"
-#         Effect = "Allow"
-#         Action = ["eks:DescribeCluster"]
-#         Resource = "arn:aws:eks:${var.aws_region}:${var.account_id}:cluster/${var.name}-*"
-#       },
-#       {
-#         Sid    = "S3FrontendDeploy"
-#         Effect = "Allow"
-#         Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-#         Resource = [
-#           "arn:aws:s3:::${var.name}-frontend-*",
-#           "arn:aws:s3:::${var.name}-frontend-*/*"
-#         ]
-#       }
-#     ]
-#   })
-# }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Effect = "Allow"
+      Principal = {
+        Federated = resource.aws_iam_openid_connect_provider.github.arn
+      }
+      Condition = {
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"
+        }
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
 
-# resource "aws_iam_role_policy_attachment" "cicd" {
-#   role       = aws_iam_role.cicd.name
-#   policy_arn = aws_iam_policy.cicd.arn
-# }
+  tags = { Name = "${var.name}-cicd-role" }
+}
+
+resource "aws_iam_policy" "cicd" {
+  name = "${var.name}-cicd-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ECRAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRPush"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories"
+        ]
+        Resource = [
+          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-web-app",
+          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-mobile-app",
+          "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/${var.name}-backend-api"
+        ]
+      },
+      {
+        Sid      = "EKSDescribe"
+        Effect   = "Allow"
+        Action   = ["eks:DescribeCluster"]
+        Resource = "arn:aws:eks:${var.aws_region}:${var.account_id}:cluster/${var.name}-*"
+      },
+      {
+        Sid    = "S3FrontendDeploy"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${var.name}-frontend-*",
+          "arn:aws:s3:::${var.name}-frontend-*/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "cicd" {
+  role       = aws_iam_role.cicd.name
+  policy_arn = aws_iam_policy.cicd.arn
+}
 
 # =============================================================================
 # Section 4: Groups (AssumeRole 정책만 보유)
@@ -1102,4 +1542,18 @@ resource "aws_iam_user_login_profile" "platform" {
   lifecycle {
     ignore_changes = all
   }
+}
+
+# =============================================================================
+# Section 6: AdministratorAccess for all users (both groups)
+# =============================================================================
+
+resource "aws_iam_group_policy_attachment" "app_admin_access" {
+  group      = aws_iam_group.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_group_policy_attachment" "platform_admin_access" {
+  group      = aws_iam_group.platform.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }

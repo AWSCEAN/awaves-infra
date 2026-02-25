@@ -41,3 +41,8 @@ output "vpc_endpoint_dynamodb_id" {
   description = "ID of the DynamoDB VPC endpoint"
   value       = aws_vpc_endpoint.dynamodb.id
 }
+
+output "vpc_endpoint_sagemaker_runtime_id" {
+  description = "ID of the SageMaker Runtime VPC Interface endpoint"
+  value       = aws_vpc_endpoint.sagemaker_runtime.id
+}

@@ -287,3 +287,266 @@ resource "aws_iam_role_policy_attachment" "lb_controller" {
   role       = aws_iam_role.lb_controller.name
   policy_arn = aws_iam_policy.lb_controller.arn
 }
+
+# =============================================================================
+# Backend API — IRSA
+# =============================================================================
+
+data "aws_region" "current" {}
+
+resource "aws_iam_policy" "backend_api" {
+  name = "${var.name}-backend-api"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:BatchGetItem",
+          "dynamodb:DescribeTable"
+        ]
+        Resource = "arn:aws:dynamodb:${data.aws_region.current.name}:${var.account_id}:table/${var.name}-*"
+      },
+      {
+        Sid    = "S3Access"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::awaves-datalake-*",
+          "arn:aws:s3:::awaves-datalake-*/*",
+          "arn:aws:s3:::awaves-ml-*",
+          "arn:aws:s3:::awaves-ml-*/*"
+        ]
+      },
+      {
+        Sid      = "SageMakerInvoke"
+        Effect   = "Allow"
+        Action   = ["sagemaker:InvokeEndpoint"]
+        Resource = "arn:aws:sagemaker:${data.aws_region.current.name}:${var.account_id}:endpoint/${var.name}-*"
+      },
+      {
+        Sid      = "OpenSearchAccess"
+        Effect   = "Allow"
+        Action   = ["es:ESHttp*"]
+        Resource = "arn:aws:es:${data.aws_region.current.name}:${var.account_id}:domain/${var.name}-*"
+      },
+      {
+        Sid      = "ElastiCacheConnect"
+        Effect   = "Allow"
+        Action   = ["elasticache:Connect"]
+        Resource = "arn:aws:elasticache:${data.aws_region.current.name}:${var.account_id}:replicationgroup/${var.name}-*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${var.account_id}:log-group:/aws/eks/${var.name}/*"
+      },
+      {
+        Sid      = "CloudWatchMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+      },
+      {
+        Sid      = "AuroraConnect"
+        Effect   = "Allow"
+        Action   = ["rds-db:connect"]
+        Resource = "arn:aws:rds-db:${data.aws_region.current.name}:${var.account_id}:dbuser:*/*"
+      },
+      {
+        Sid    = "KMSAccess"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SecretsManagerAccess"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${data.aws_region.current.name}:${var.account_id}:secret:${var.name}-*"
+      }
+    ]
+  })
+
+  tags = { Name = "${var.name}-backend-api" }
+}
+
+resource "aws_iam_role" "backend_api" {
+  name = "${var.name}-backend-api"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = module.eks.oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:${var.name}:backend-api"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = { Name = "${var.name}-backend-api" }
+}
+
+resource "aws_iam_role_policy_attachment" "backend_api" {
+  role       = aws_iam_role.backend_api.name
+  policy_arn = aws_iam_policy.backend_api.arn
+}
+
+resource "aws_iam_role_policy_attachment" "backend_api_xray" {
+  role       = aws_iam_role.backend_api.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+# =============================================================================
+# Web App — IRSA
+# =============================================================================
+
+resource "aws_iam_policy" "web_app" {
+  name = "${var.name}-web-app"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CloudFrontInvalidation"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:CreateInvalidation",
+          "cloudfront:GetInvalidation",
+          "cloudfront:GetDistribution",
+          "cloudfront:ListDistributions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "SecretsManagerAccess"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${data.aws_region.current.name}:${var.account_id}:secret:${var.name}-*"
+      },
+      {
+        Sid      = "KMSDecrypt"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = { Name = "${var.name}-web-app" }
+}
+
+resource "aws_iam_role" "web_app" {
+  name = "${var.name}-web-app"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = module.eks.oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:${var.name}:web-app"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = { Name = "${var.name}-web-app" }
+}
+
+resource "aws_iam_role_policy_attachment" "web_app" {
+  role       = aws_iam_role.web_app.name
+  policy_arn = aws_iam_policy.web_app.arn
+}
+
+# =============================================================================
+# Mobile App — IRSA
+# =============================================================================
+
+resource "aws_iam_policy" "mobile_app" {
+  name = "${var.name}-mobile-app"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "SecretsManagerAccess"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${data.aws_region.current.name}:${var.account_id}:secret:${var.name}-*"
+      },
+      {
+        Sid      = "KMSDecrypt"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = { Name = "${var.name}-mobile-app" }
+}
+
+resource "aws_iam_role" "mobile_app" {
+  name = "${var.name}-mobile-app"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = module.eks.oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:${var.name}:mobile-app"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = { Name = "${var.name}-mobile-app" }
+}
+
+resource "aws_iam_role_policy_attachment" "mobile_app" {
+  role       = aws_iam_role.mobile_app.name
+  policy_arn = aws_iam_policy.mobile_app.arn
+}

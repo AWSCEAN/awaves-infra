@@ -27,3 +27,18 @@ output "lb_controller_role_arn" {
   description = "IAM role ARN for AWS Load Balancer Controller"
   value       = aws_iam_role.lb_controller.arn
 }
+
+output "backend_api_role_arn" {
+  description = "IAM role ARN for backend-api IRSA"
+  value       = aws_iam_role.backend_api.arn
+}
+
+output "web_app_role_arn" {
+  description = "IAM role ARN for web-app IRSA"
+  value       = aws_iam_role.web_app.arn
+}
+
+output "mobile_app_role_arn" {
+  description = "IAM role ARN for mobile-app IRSA"
+  value       = aws_iam_role.mobile_app.arn
+}

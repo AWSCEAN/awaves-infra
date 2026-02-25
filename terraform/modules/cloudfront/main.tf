@@ -25,7 +25,7 @@ resource "aws_cloudfront_distribution" "this" {
   default_root_object = "index.html"
   price_class         = "PriceClass_200"  # NA + EU + Asia (excl. South America/Africa/Australia)
   web_acl_id          = var.waf_web_acl_arn != null ? var.waf_web_acl_arn : null
-  aliases             = var.domain_name != "" ? [var.domain_name] : []
+  aliases             = var.domain_names
 
   # =============================================================================
   # Origin 1: S3 (Frontend static assets)

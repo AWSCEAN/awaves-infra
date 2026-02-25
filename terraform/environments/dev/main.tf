@@ -95,6 +95,9 @@ module "lambda" {
   vpc_id                    = module.networking.vpc_id
   private_subnet_ids        = module.networking.private_subnet_ids
   elasticache_endpoint      = module.elasticache.primary_endpoint
+  # Constructed ARN to avoid circular dependency with module.sagemaker
+  sagemaker_pipeline_arn          = "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:pipeline/${local.name}-training"
+  hourly_model_package_group_name = "${local.name}-surf-index"
 }
 
 # =============================================================================
@@ -135,6 +138,16 @@ module "sagemaker" {
   vpc_id                       = module.networking.vpc_id
   private_subnet_ids           = module.networking.private_subnet_ids
   sagemaker_execution_role_arn = module.iam.sagemaker_execution_role_arn
+  s3_bucket_ml                 = module.s3.bucket_ml
+  s3_bucket_datalake           = module.s3.bucket_datalake
+  account_id                   = data.aws_caller_identity.current.account_id
+  aws_region                   = var.aws_region
+  lambda_alert_ml_pipeline_arn = module.lambda.alert_ml_pipeline_arn
+  # Set after first training run, e.g.:
+  # model_data_url = "s3://awaves-ml-dev/models/<job-name>/output/model.tar.gz"
+  model_data_url               = var.sagemaker_model_data_url
+
+  depends_on = [module.lambda]
 }
 
 # =============================================================================
@@ -257,6 +270,23 @@ module "rds" {
   vpc_id                     = module.networking.vpc_id
   private_subnet_cidrs       = var.private_subnet_cidrs
   database_subnet_group_name = module.networking.database_subnet_group_name
+  extra_ingress_cidrs        = ["118.218.200.33/32"]
+}
+
+# =============================================================================
+# OpenSearch Service (surf spot full-text search)
+# =============================================================================
+
+module "opensearch" {
+  source = "../../modules/opensearch"
+
+  name                 = local.name
+  vpc_id               = module.networking.vpc_id
+  aws_region           = var.aws_region
+  account_id           = data.aws_caller_identity.current.account_id
+  private_subnet_cidrs = var.private_subnet_cidrs
+  database_subnet_ids  = module.networking.database_subnet_ids
+  # create_service_linked_role = false  # uncomment if role already exists in account
 }
 
 # =============================================================================
@@ -273,6 +303,28 @@ module "elasticache" {
 }
 
 # =============================================================================
+# Route 53 - Hosted Zone
+# =============================================================================
+
+module "route53" {
+  source = "../../modules/route53"
+
+  domain_name = var.domain_name
+}
+
+# =============================================================================
+# ACM Certificate (us-east-1 — required for CloudFront)
+# DNS validation records are created in Route 53 automatically
+# =============================================================================
+
+module "acm" {
+  source = "../../modules/acm"
+
+  domain_name = var.domain_name
+  zone_id     = module.route53.zone_id
+}
+
+# =============================================================================
 # CloudFront (S3 frontend origin, ALB API origin 추후 추가)
 # =============================================================================
 
@@ -283,7 +335,37 @@ module "cloudfront" {
   s3_bucket_id                     = module.s3.bucket_frontend
   s3_bucket_arn                    = module.s3.bucket_frontend_arn
   s3_bucket_regional_domain_name   = module.s3.bucket_frontend_regional_domain_name
+  domain_names                     = [var.domain_name, "www.${var.domain_name}"]
+  acm_certificate_arn              = module.acm.certificate_arn
   # alb_dns_name: EKS Ingress 배포 후 추가
-  # domain_name: Route 53 도메인 연결 시 추가
-  # acm_certificate_arn: ACM 인증서 발급 후 추가
+}
+
+# =============================================================================
+# Route 53 - A Alias Records (CloudFront)
+# Defined here (not in route53 module) to avoid circular dependency:
+#   route53 zone → acm → cloudfront → A records
+# =============================================================================
+
+resource "aws_route53_record" "apex" {
+  zone_id = module.route53.zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = module.cloudfront.domain_name
+    zone_id                = module.cloudfront.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "www" {
+  zone_id = module.route53.zone_id
+  name    = "www.${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = module.cloudfront.domain_name
+    zone_id                = module.cloudfront.hosted_zone_id
+    evaluate_target_health = false
+  }
 }

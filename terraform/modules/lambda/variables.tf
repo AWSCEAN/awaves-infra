@@ -68,3 +68,15 @@ variable "bedrock_model_id" {
   type        = string
   default     = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 }
+
+variable "sagemaker_pipeline_arn" {
+  description = "ARN of the SageMaker training pipeline (triggered by drift_detection on isDrift=true)"
+  type        = string
+  default     = ""
+}
+
+variable "hourly_model_package_group_name" {
+  description = "SageMaker Model Package Group name for hourly model (triggers cache invalidation on Approved)"
+  type        = string
+  default     = ""
+}

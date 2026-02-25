@@ -73,6 +73,12 @@ data "archive_file" "bedrock_summary" {
   output_path = "${path.module}/handlers/bedrock_summary.zip"
 }
 
+data "archive_file" "cache_invalidation" {
+  type        = "zip"
+  source_file = "${path.module}/handlers/cache_invalidation.py"
+  output_path = "${path.module}/handlers/cache_invalidation.zip"
+}
+
 # =============================================================================
 # Lambda Functions
 # =============================================================================
@@ -209,8 +215,9 @@ resource "aws_lambda_function" "drift_detection" {
 
   environment {
     variables = {
-      ENVIRONMENT  = var.environment
-      S3_BUCKET_ML = var.s3_bucket_ml
+      ENVIRONMENT            = var.environment
+      S3_BUCKET_ML           = var.s3_bucket_ml
+      SAGEMAKER_PIPELINE_ARN = var.sagemaker_pipeline_arn
     }
   }
 
@@ -291,7 +298,79 @@ resource "aws_lambda_function" "alert_ml_pipeline" {
   }
 }
 
-# 7. Bedrock Summary - generate AI surf summary from DynamoDB conditions
+# 7. Cache Invalidation - flush ElastiCache on new hourly model approval
+resource "aws_lambda_function" "cache_invalidation" {
+  function_name = "${var.name}-cache-invalidation"
+  role          = var.lambda_execution_role_arn
+  handler       = "cache_invalidation.handler"
+  runtime       = "python3.12"
+  timeout       = 60
+  memory_size   = 128
+  layers        = [aws_lambda_layer_version.valkey.arn]
+
+  filename         = data.archive_file.cache_invalidation.output_path
+  source_code_hash = data.archive_file.cache_invalidation.output_base64sha256
+
+  dynamic "vpc_config" {
+    for_each = var.vpc_id != "" && length(var.private_subnet_ids) > 0 ? [1] : []
+    content {
+      subnet_ids         = var.private_subnet_ids
+      security_group_ids = [aws_security_group.save_lambda[0].id]
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT          = var.environment
+      ELASTICACHE_ENDPOINT = var.elasticache_endpoint
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-cache-invalidation"
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "model_approved" {
+  count       = var.hourly_model_package_group_name != "" ? 1 : 0
+  name        = "${var.name}-hourly-model-approved"
+  description = "Trigger cache invalidation when hourly model is approved in Model Registry"
+
+  event_pattern = jsonencode({
+    source      = ["aws.sagemaker"]
+    detail-type = ["SageMaker Model Package State Change"]
+    detail = {
+      ModelApprovalStatus    = ["Approved"]
+      ModelPackageGroupName  = [var.hourly_model_package_group_name]
+    }
+  })
+
+  tags = {
+    Name = "${var.name}-hourly-model-approved"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "cache_invalidation" {
+  count     = var.hourly_model_package_group_name != "" ? 1 : 0
+  rule      = aws_cloudwatch_event_rule.model_approved[0].name
+  target_id = "cache-invalidation"
+  arn       = aws_lambda_function.cache_invalidation.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_cache_invalidation" {
+  count         = var.hourly_model_package_group_name != "" ? 1 : 0
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.cache_invalidation.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.model_approved[0].arn
+}
+
+# 8. Bedrock Summary - generate AI surf summary from DynamoDB conditions
 resource "aws_lambda_function" "bedrock_summary" {
   function_name = "${var.name}-bedrock-summary"
   role          = var.lambda_execution_role_arn

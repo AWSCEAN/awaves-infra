@@ -32,6 +32,25 @@ resource "aws_dynamodb_table" "surf_info" {
   }
 }
 
+resource "aws_dynamodb_table" "locations" {
+  name         = "${var.name}-locations"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "locationId"
+
+  attribute {
+    name = "locationId"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    Name = "${var.name}-locations"
+  }
+}
+
 resource "aws_dynamodb_table" "saved_list" {
   name         = "${var.name}-saved-list"
   billing_mode = "PAY_PER_REQUEST"

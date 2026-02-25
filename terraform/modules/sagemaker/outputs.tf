@@ -22,3 +22,28 @@ output "model_package_group_arn" {
   description = "Model registry group ARN"
   value       = aws_sagemaker_model_package_group.surf_index.arn
 }
+
+output "training_pipeline_arn" {
+  description = "SageMaker training pipeline ARN (triggered by drift detection Lambda)"
+  value       = aws_sagemaker_pipeline.training.arn
+}
+
+output "training_pipeline_name" {
+  description = "SageMaker training pipeline name"
+  value       = aws_sagemaker_pipeline.training.pipeline_name
+}
+
+output "endpoint_name" {
+  description = "SageMaker real-time endpoint name (empty if model_data_url not set)"
+  value       = var.model_data_url != "" ? aws_sagemaker_endpoint.surf_index[0].name : ""
+}
+
+output "endpoint_arn" {
+  description = "SageMaker real-time endpoint ARN (empty if model_data_url not set)"
+  value       = var.model_data_url != "" ? aws_sagemaker_endpoint.surf_index[0].arn : ""
+}
+
+output "endpoint_url" {
+  description = "SageMaker runtime invocation URL"
+  value       = "https://runtime.sagemaker.${var.aws_region}.amazonaws.com/endpoints/${var.name}-surf-index/invocations"
+}
