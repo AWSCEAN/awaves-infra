@@ -39,9 +39,9 @@ resource "aws_scheduler_schedule" "data_collection" {
   name       = "${var.name}-data-collection"
   group_name = "default"
 
-  schedule_expression          = "rate(3 hours)"
+  schedule_expression          = "cron(0 0/3 * * ? *)" # 00:00, 03:00, 06:00 ... 21:00 KST
   schedule_expression_timezone = "Asia/Seoul"
-  state                        = "DISABLED"
+  state                        = "ENABLED"
 
   flexible_time_window {
     mode = "OFF"
@@ -52,5 +52,5 @@ resource "aws_scheduler_schedule" "data_collection" {
     role_arn = aws_iam_role.eventbridge.arn
   }
 
-  description = "Trigger data collection pipeline every 3 hours (DISABLED by default)"
+  description = "Trigger data collection pipeline every 3 hours starting midnight (Asia/Seoul)"
 }

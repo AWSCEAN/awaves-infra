@@ -54,16 +54,16 @@ resource "aws_dynamodb_table" "locations" {
 resource "aws_dynamodb_table" "saved_list" {
   name         = "${var.name}-saved-list"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "UserId"
-  range_key    = "SavedAt"
+  hash_key     = "userId"
+  range_key    = "sortKey"
 
   attribute {
-    name = "UserId"
+    name = "userId"
     type = "S"
   }
 
   attribute {
-    name = "SavedAt"
+    name = "sortKey"
     type = "S"
   }
 

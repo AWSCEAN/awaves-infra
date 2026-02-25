@@ -195,8 +195,8 @@ def _detect_and_flag_changes(latest_per_location, r):
         print(f"[change] {location_id}: {len(saved_items)} saved item(s) to check")
 
         for item in saved_items:
-            user_id = item.get("UserId")
-            sort_key = item.get("SortKey")
+            user_id = item.get("userId")
+            sort_key = item.get("sortKey")
             if not user_id or not sort_key:
                 continue
 
@@ -231,7 +231,7 @@ def _detect_and_flag_changes(latest_per_location, r):
             change_message = json.dumps({"changes": changes})
             try:
                 tbl.update_item(
-                    Key={"UserId": user_id, "SortKey": sort_key},
+                    Key={"userId": user_id, "sortKey": sort_key},
                     UpdateExpression=(
                         "SET flagChange = :fc, changeMessage = :cm, "
                         "surfScore = :ss, surfGrade = :sg, "
