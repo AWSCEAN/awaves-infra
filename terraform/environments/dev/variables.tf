@@ -75,3 +75,22 @@ variable "sagemaker_model_data_url" {
   type        = string
   default     = ""
 }
+
+variable "sagemaker_weekly_model_data_url" {
+  description = "S3 URI of weekly LightGBM model artifact (model.tar.gz). Set to deploy the weekly real-time endpoint."
+  type        = string
+  default     = ""
+}
+
+variable "discord_deploy_webhook_url" {
+  description = "Discord webhook URL for deploy/infra alerts"
+  type        = string
+  default     = ""
+}
+
+variable "discord_error_webhook_url" {
+  description = "Discord webhook URL for error/monitoring alerts"
+  type        = string
+  default     = ""
+}
+

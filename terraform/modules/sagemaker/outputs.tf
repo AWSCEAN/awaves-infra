@@ -44,6 +44,21 @@ output "endpoint_arn" {
 }
 
 output "endpoint_url" {
-  description = "SageMaker runtime invocation URL"
+  description = "SageMaker runtime invocation URL (hourly surf-index)"
   value       = "https://runtime.sagemaker.${var.aws_region}.amazonaws.com/endpoints/${var.name}-surf-index/invocations"
+}
+
+output "weekly_endpoint_name" {
+  description = "SageMaker weekly endpoint name (empty if weekly_model_data_url not set)"
+  value       = var.weekly_model_data_url != "" ? aws_sagemaker_endpoint.weekly[0].name : ""
+}
+
+output "weekly_endpoint_arn" {
+  description = "SageMaker weekly endpoint ARN (empty if weekly_model_data_url not set)"
+  value       = var.weekly_model_data_url != "" ? aws_sagemaker_endpoint.weekly[0].arn : ""
+}
+
+output "weekly_endpoint_url" {
+  description = "SageMaker runtime invocation URL (weekly LightGBM)"
+  value       = "https://runtime.sagemaker.${var.aws_region}.amazonaws.com/endpoints/${var.name}-weekly/invocations"
 }

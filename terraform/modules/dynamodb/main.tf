@@ -20,7 +20,7 @@ resource "aws_dynamodb_table" "surf_info" {
 
   ttl {
     attribute_name = "expiredAt"
-    enabled        = true
+    enabled        = false
   }
 
   point_in_time_recovery {

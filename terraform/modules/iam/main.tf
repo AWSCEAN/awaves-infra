@@ -94,7 +94,8 @@ resource "aws_iam_policy" "lambda_dynamodb_access" {
       ]
       Resource = [
         "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-surf-info",
-        "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-saved-list"
+        "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-saved-list",
+        "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${var.name}-locations"
       ]
     }]
   })
@@ -138,7 +139,7 @@ resource "aws_iam_policy" "lambda_bedrock_access" {
       Effect = "Allow"
       Action = ["bedrock:InvokeModel"]
       Resource = [
-        "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-3-5-haiku-20241022-v1:0"
+        "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
       ]
     }]
   })
@@ -154,17 +155,33 @@ resource "aws_iam_policy" "lambda_sagemaker_pipeline" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      # drift_detection Lambda: trigger retraining pipeline when isDrift=true
-      Sid    = "SageMakerPipelineTrigger"
-      Effect = "Allow"
-      Action = [
-        "sagemaker:StartPipelineExecution",
-        "sagemaker:DescribePipelineExecution",
-        "sagemaker:ListPipelineExecutions",
-      ]
-      Resource = "arn:aws:sagemaker:${var.aws_region}:${var.account_id}:pipeline/${var.name}-training"
-    }]
+    Statement = [
+      {
+        # drift_detection Lambda: trigger retraining pipeline when isDrift=true
+        Sid    = "SageMakerPipelineTrigger"
+        Effect = "Allow"
+        Action = [
+          "sagemaker:StartPipelineExecution",
+          "sagemaker:DescribePipelineExecution",
+          "sagemaker:ListPipelineExecutions",
+        ]
+        Resource = "arn:aws:sagemaker:${var.aws_region}:${var.account_id}:pipeline/${var.name}-training"
+      },
+      {
+        # bedrock_summary Lambda: on-demand surf score inference (fallback)
+        Sid      = "SageMakerEndpointInvoke"
+        Effect   = "Allow"
+        Action   = ["sagemaker:InvokeEndpoint"]
+        Resource = "arn:aws:sagemaker:${var.aws_region}:${var.account_id}:endpoint/${var.name}-surf-index"
+      },
+      {
+        # cache_invalidation Lambda: trigger batch inference Step Functions after model approval
+        Sid      = "StepFunctionsBatchInference"
+        Effect   = "Allow"
+        Action   = ["states:StartExecution"]
+        Resource = "arn:aws:states:${var.aws_region}:${var.account_id}:stateMachine:${var.name}-batch-inference"
+      },
+    ]
   })
 }
 
@@ -1426,7 +1443,13 @@ resource "aws_iam_policy" "cicd" {
         Sid      = "EKSDescribe"
         Effect   = "Allow"
         Action   = ["eks:DescribeCluster"]
-        Resource = "arn:aws:eks:${var.aws_region}:${var.account_id}:cluster/${var.name}-*"
+        Resource = "*"
+      },
+      {
+        Sid      = "EKSList"
+        Effect   = "Allow"
+        Action   = ["eks:ListClusters"]
+        Resource = "*"
       },
       {
         Sid    = "S3FrontendDeploy"
@@ -1436,6 +1459,12 @@ resource "aws_iam_policy" "cicd" {
           "arn:aws:s3:::${var.name}-frontend-*",
           "arn:aws:s3:::${var.name}-frontend-*/*"
         ]
+      },
+      {
+        Sid      = "SNSAlerts"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = "arn:aws:sns:${var.aws_region}:${var.account_id}:${var.name}-alerts"
       }
     ]
   })

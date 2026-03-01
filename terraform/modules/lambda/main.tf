@@ -37,6 +37,12 @@ data "archive_file" "api_call" {
   output_path = "${path.module}/handlers/api_call.zip"
 }
 
+data "archive_file" "data_validation" {
+  type        = "zip"
+  source_file = "${path.module}/handlers/data_validation.py"
+  output_path = "${path.module}/handlers/data_validation.zip"
+}
+
 data "archive_file" "preprocessing" {
   type        = "zip"
   source_file = "${path.module}/handlers/preprocessing.py"
@@ -79,6 +85,12 @@ data "archive_file" "cache_invalidation" {
   output_path = "${path.module}/handlers/cache_invalidation.zip"
 }
 
+data "archive_file" "data_collection_training" {
+  type        = "zip"
+  source_file = "${path.module}/handlers/data_collection_training.py"
+  output_path = "${path.module}/handlers/data_collection_training.zip"
+}
+
 # =============================================================================
 # Lambda Functions
 # =============================================================================
@@ -111,7 +123,35 @@ resource "aws_lambda_function" "api_call" {
   }
 }
 
-# 2. Preprocessing - merge marine + weather, flatten hourly data
+# 2. Data Validation - validate raw S3 JSON before preprocessing
+resource "aws_lambda_function" "data_validation" {
+  function_name = "${var.name}-data-validation"
+  role          = var.lambda_execution_role_arn
+  handler       = "data_validation.handler"
+  runtime       = "python3.12"
+  timeout       = 60
+  memory_size   = 128
+
+  filename         = data.archive_file.data_validation.output_path
+  source_code_hash = data.archive_file.data_validation.output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT        = var.environment
+      S3_BUCKET_DATALAKE = var.s3_bucket_datalake
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-data-validation"
+  }
+}
+
+# 3. Preprocessing - merge marine + weather, flatten hourly data
 resource "aws_lambda_function" "preprocessing" {
   function_name = "${var.name}-preprocessing"
   role          = var.lambda_execution_role_arn
@@ -245,8 +285,9 @@ resource "aws_lambda_function" "alert_monitoring" {
 
   environment {
     variables = {
-      ENVIRONMENT         = var.environment
-      DISCORD_WEBHOOK_URL = var.discord_webhook_url
+      ENVIRONMENT                = var.environment
+      DISCORD_DEPLOY_WEBHOOK_URL = var.discord_deploy_webhook_url
+      DISCORD_ERROR_WEBHOOK_URL  = var.discord_error_webhook_url
     }
   }
 
@@ -289,8 +330,8 @@ resource "aws_lambda_function" "alert_ml_pipeline" {
 
   environment {
     variables = {
-      ENVIRONMENT   = var.environment
-      SNS_TOPIC_ARN = var.sns_alerts_topic_arn
+      ENVIRONMENT          = var.environment
+      DISCORD_WEBHOOK_URL  = var.discord_error_webhook_url
     }
   }
 
@@ -326,8 +367,10 @@ resource "aws_lambda_function" "cache_invalidation" {
 
   environment {
     variables = {
-      ENVIRONMENT          = var.environment
-      ELASTICACHE_ENDPOINT = var.elasticache_endpoint
+      ENVIRONMENT                 = var.environment
+      ELASTICACHE_ENDPOINT        = var.elasticache_endpoint
+      INFERENCE_STATE_MACHINE_ARN = var.inference_state_machine_arn
+      S3_BUCKET_DATALAKE          = var.s3_bucket_datalake
     }
   }
 
@@ -389,13 +432,44 @@ resource "aws_lambda_function" "bedrock_summary" {
 
   environment {
     variables = {
-      ENVIRONMENT      = var.environment
-      DYNAMODB_TABLE   = var.dynamodb_table_surf_info
-      BEDROCK_MODEL_ID = var.bedrock_model_id
+      ENVIRONMENT             = var.environment
+      DYNAMODB_TABLE          = var.dynamodb_table_surf_info
+      BEDROCK_MODEL_ID        = var.bedrock_model_id
+      SAGEMAKER_ENDPOINT_NAME = var.sagemaker_endpoint_name
     }
   }
 
   tags = {
     Name = "${var.name}-bedrock-summary"
+  }
+}
+
+# 9. Data Collection Training - fetch Surfline ratings + labeled CSV for retraining
+#    Invoked as Step 0 of SageMaker training pipeline (Lambda step)
+resource "aws_lambda_function" "data_collection_training" {
+  function_name = "${var.name}-data-collection-training"
+  role          = var.lambda_execution_role_arn
+  handler       = "data_collection_training.handler"
+  runtime       = "python3.12"
+  timeout       = 300
+  memory_size   = 2048
+
+  filename         = data.archive_file.data_collection_training.output_path
+  source_code_hash = data.archive_file.data_collection_training.output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT        = var.environment
+      S3_BUCKET_DATALAKE = var.s3_bucket_datalake
+      S3_BUCKET_ML       = var.s3_bucket_ml
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-data-collection-training"
   }
 }

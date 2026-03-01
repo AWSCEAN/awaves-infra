@@ -1,7 +1,7 @@
 """
 Lambda: Alert ML Pipeline
 Triggered when SageMaker model evaluation results in "Bad" quality.
-Publishes alert to SNS topic for data scientist notification.
+Sends alert directly to Discord webhook for data scientist notification.
 
 Input event:
   {
@@ -14,19 +14,16 @@ Input event:
   }
 
 Output:
-  Publishes to SNS alerts topic.
+  Posts to Discord webhook.
   Returns: { "status": "success", "notified": true }
 """
 
 import json
 import os
+import urllib.request
 
-import boto3
-
-SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-
-sns = boto3.client("sns")
 
 
 def handler(event, context):
@@ -43,28 +40,32 @@ def handler(event, context):
             "notified": False,
         }
 
-    # Build alert message
-    message = {
-        "alert_type": "ML_PIPELINE_BAD_EVALUATION",
-        "environment": ENVIRONMENT,
-        "model_version": model_version,
-        "evaluation_result": evaluation_result,
-        "metrics": metrics,
-        "action_required": "Review model training results and retrain if necessary.",
-    }
-
-    subject = f"[awaves-{ENVIRONMENT}] ML Pipeline Alert: Bad Model Evaluation"
-
-    if not SNS_TOPIC_ARN:
-        print("SNS_TOPIC_ARN not configured. Logging only.")
-        print(json.dumps(message, indent=2))
-        return {"status": "success", "notified": False, "reason": "no_sns_topic"}
-
-    sns.publish(
-        TopicArn=SNS_TOPIC_ARN,
-        Subject=subject[:100],
-        Message=json.dumps(message, indent=2),
+    # Build Discord message
+    metrics_str = "\n".join(f"  {k}: {v}" for k, v in metrics.items())
+    content = (
+        f"**[awaves-{ENVIRONMENT}] ML Pipeline Alert: Bad Model Evaluation**\n"
+        f"Model Version: `{model_version}`\n"
+        f"Metrics:\n{metrics_str}\n"
+        f"Action Required: Review model training results and retrain if necessary."
     )
+
+    payload = json.dumps({"content": content}).encode("utf-8")
+
+    if not DISCORD_WEBHOOK_URL:
+        print("DISCORD_WEBHOOK_URL not configured. Logging only.")
+        print(content)
+        return {"status": "success", "notified": False, "reason": "no_webhook_url"}
+
+    req = urllib.request.Request(
+        DISCORD_WEBHOOK_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "awaves-alert/1.0",
+        },
+        method="POST",
+    )
+    urllib.request.urlopen(req)
 
     return {
         "status": "success",

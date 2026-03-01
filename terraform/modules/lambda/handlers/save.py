@@ -85,21 +85,22 @@ def _get_valkey():
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
 def _surf_grade(score):
+    """Convert surf score (0-100) to grade (0-4)."""
     if score is None:
-        return "F"
+        return 0
     try:
         s = float(score)
     except (TypeError, ValueError):
-        return "F"
+        return 0
     if s >= 80:
-        return "A"
+        return 4
     elif s >= 60:
-        return "B"
+        return 3
     elif s >= 40:
-        return "C"
+        return 2
     elif s >= 20:
-        return "D"
-    return "F"
+        return 1
+    return 0
 
 
 def _to_decimal(value):
@@ -365,6 +366,8 @@ def handler(event, context):
                 # Track nearest upcoming record per location for ElastiCache
                 try:
                     row_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                    if row_dt.tzinfo is None:
+                        row_dt = row_dt.replace(tzinfo=timezone.utc)
                     if row_dt >= now_ts:
                         prev = latest_per_location.get(location_id)
                         if prev is None or row_dt < prev[0]:

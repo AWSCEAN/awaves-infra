@@ -71,7 +71,6 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_call_errors" {
   }
 
   alarm_actions = [var.sns_alerts_topic_arn]
-  ok_actions    = [var.sns_alerts_topic_arn]
 
   tags = { Name = "${var.name}-lambda-api-call-errors" }
 }

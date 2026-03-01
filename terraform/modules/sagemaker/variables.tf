@@ -43,6 +43,11 @@ variable "lambda_alert_ml_pipeline_arn" {
   type        = string
 }
 
+variable "lambda_data_collection_training_arn" {
+  description = "ARN of the data-collection-training Lambda (Step 0 in training pipeline)"
+  type        = string
+}
+
 variable "qwk_threshold" {
   description = "Minimum QWK score to approve model registration (0.0-1.0)"
   type        = number
@@ -50,7 +55,13 @@ variable "qwk_threshold" {
 }
 
 variable "model_data_url" {
-  description = "S3 URI of trained model artifact (model.tar.gz). Set after first training run to create the real-time endpoint."
+  description = "S3 URI of hourly surf-index model artifact (model.tar.gz). Set after first training run to create the real-time endpoint."
+  type        = string
+  default     = ""
+}
+
+variable "weekly_model_data_url" {
+  description = "S3 URI of weekly LightGBM model artifact (model.tar.gz). Set to create the weekly real-time endpoint."
   type        = string
   default     = ""
 }

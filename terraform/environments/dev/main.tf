@@ -91,14 +91,18 @@ module "lambda" {
   s3_bucket_ml              = module.s3.bucket_ml
   dynamodb_table_surf_info  = module.dynamodb.table_surf_info_name
   dynamodb_table_saved_list = module.dynamodb.table_saved_list_name
-  sns_alerts_topic_arn      = module.sns.alerts_topic_arn
-  bedrock_model_id          = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+  sns_alerts_topic_arn           = module.sns.alerts_topic_arn
+  discord_deploy_webhook_url     = var.discord_deploy_webhook_url
+  discord_error_webhook_url      = var.discord_error_webhook_url
+  bedrock_model_id          = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
   vpc_id                    = module.networking.vpc_id
   private_subnet_ids        = module.networking.private_subnet_ids
   elasticache_endpoint      = module.elasticache.primary_endpoint
-  # Constructed ARN to avoid circular dependency with module.sagemaker
+  # Constructed ARN/name to avoid circular dependency with module.sagemaker / module.step_functions
   sagemaker_pipeline_arn          = "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:pipeline/${local.name}-training"
   hourly_model_package_group_name = "${local.name}-surf-index"
+  sagemaker_endpoint_name         = "${local.name}-surf-index"
+  inference_state_machine_arn     = "arn:aws:states:${var.aws_region}:${data.aws_caller_identity.current.account_id}:stateMachine:${local.name}-batch-inference"
 }
 
 # =============================================================================
@@ -110,6 +114,7 @@ module "step_functions" {
 
   name                         = local.name
   lambda_api_call_arn          = module.lambda.api_call_arn
+  lambda_data_validation_arn   = module.lambda.data_validation_arn
   lambda_preprocessing_arn     = module.lambda.preprocessing_arn
   lambda_drift_detection_arn   = module.lambda.drift_detection_arn
   lambda_save_arn              = module.lambda.save_arn
@@ -143,10 +148,12 @@ module "sagemaker" {
   s3_bucket_datalake           = module.s3.bucket_datalake
   account_id                   = data.aws_caller_identity.current.account_id
   aws_region                   = var.aws_region
-  lambda_alert_ml_pipeline_arn = module.lambda.alert_ml_pipeline_arn
+  lambda_alert_ml_pipeline_arn        = module.lambda.alert_ml_pipeline_arn
+  lambda_data_collection_training_arn = module.lambda.data_collection_training_arn
   # Set after first training run, e.g.:
   # model_data_url = "s3://awaves-ml-dev/models/<job-name>/output/model.tar.gz"
-  model_data_url = var.sagemaker_model_data_url
+  model_data_url         = var.sagemaker_model_data_url
+  weekly_model_data_url  = var.sagemaker_weekly_model_data_url
 
   depends_on = [module.lambda]
 }

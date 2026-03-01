@@ -8,6 +8,11 @@ variable "lambda_api_call_arn" {
   type        = string
 }
 
+variable "lambda_data_validation_arn" {
+  description = "ARN of the Data Validation Lambda function"
+  type        = string
+}
+
 variable "lambda_preprocessing_arn" {
   description = "ARN of the Preprocessing Lambda function"
   type        = string

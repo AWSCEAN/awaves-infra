@@ -33,6 +33,7 @@ resource "aws_iam_role_policy" "step_functions_invoke_lambda" {
         Action = "lambda:InvokeFunction"
         Resource = [
           var.lambda_api_call_arn,
+          var.lambda_data_validation_arn,
           var.lambda_preprocessing_arn,
           var.lambda_drift_detection_arn,
           var.lambda_save_arn,
@@ -80,12 +81,28 @@ resource "aws_sfn_state_machine" "data_collection" {
         Type     = "Task"
         Resource = var.lambda_api_call_arn
         Comment  = "Fetch data from external APIs (Surfline, Open-Meteo)"
-        Next     = "Preprocessing"
+        Next     = "DataValidation"
         Retry = [{
           ErrorEquals     = ["States.TaskFailed"]
           IntervalSeconds = 30
           MaxAttempts     = 2
           BackoffRate     = 2.0
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "PipelineFailed"
+        }]
+      }
+      DataValidation = {
+        Type     = "Task"
+        Resource = var.lambda_data_validation_arn
+        Comment  = "Validate raw S3 JSON files before preprocessing"
+        Next     = "Preprocessing"
+        Retry = [{
+          ErrorEquals     = ["States.TaskFailed"]
+          IntervalSeconds = 10
+          MaxAttempts     = 1
+          BackoffRate     = 1.0
         }]
         Catch = [{
           ErrorEquals = ["States.ALL"]
@@ -155,7 +172,7 @@ resource "aws_sfn_state_machine" "data_collection" {
           "inference_s3_path.$" = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.inference_prefix)"
         }
         ResultPath = "$.drift_result"
-        Next = "SaveToDatabase"
+        Next = "CheckDrift"
         Retry = [{
           ErrorEquals     = ["States.TaskFailed"]
           IntervalSeconds = 30
@@ -166,6 +183,16 @@ resource "aws_sfn_state_machine" "data_collection" {
           ErrorEquals = ["States.ALL"]
           Next        = "PipelineFailed"
         }]
+      }
+      CheckDrift = {
+        Type    = "Choice"
+        Comment = "isDrift=true → skip DDB save (retraining pipeline will save after new model); isDrift=false → save now"
+        Choices = [{
+          Variable      = "$.drift_result.isDrift"
+          BooleanEquals = false
+          Next          = "SaveToDatabase"
+        }]
+        Default = "PipelineSucceeded"
       }
       SaveToDatabase = {
         Type     = "Task"
@@ -199,5 +226,94 @@ resource "aws_sfn_state_machine" "data_collection" {
 
   tags = {
     Name = "${var.name}-data-collection"
+  }
+}
+
+# =============================================================================
+# Step Functions - Batch Inference Pipeline (model approval re-inference)
+# Starts from BatchTransform using existing processed S3 data.
+# Input: { "processed_prefix": "processed/YYYY/MM/DD/HH/",
+#           "inference_prefix": "inference/YYYY/MM/DD/HH/" }
+# =============================================================================
+
+resource "aws_sfn_state_machine" "batch_inference" {
+  name     = "${var.name}-batch-inference"
+  role_arn = aws_iam_role.step_functions.arn
+
+  definition = jsonencode({
+    Comment = "awaves batch inference pipeline (re-inference with new model)"
+    StartAt = "BatchTransform"
+    States = {
+      BatchTransform = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::sagemaker:createTransformJob.sync"
+        Comment  = "Run SageMaker Batch Transform with approved model"
+        Parameters = {
+          "TransformJobName.$" = "States.Format('bt-rerun-{}', $$.Execution.Name)"
+          ModelName            = "${var.name}-surf-index"
+          TransformInput = {
+            DataSource = {
+              S3DataSource = {
+                S3DataType = "S3Prefix"
+                "S3Uri.$"  = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.processed_prefix)"
+              }
+            }
+            ContentType = "text/csv"
+            SplitType   = "None"
+          }
+          MaxPayloadInMB = 100
+          TransformOutput = {
+            "S3OutputPath.$" = "States.Format('s3://${var.s3_bucket_datalake}/{}', $.inference_prefix)"
+          }
+          TransformResources = {
+            InstanceCount = 1
+            InstanceType  = "ml.m5.large"
+          }
+        }
+        ResultPath = "$.transform_result"
+        Next       = "SaveToDatabase"
+        Retry = [{
+          ErrorEquals     = ["States.TaskFailed"]
+          IntervalSeconds = 60
+          MaxAttempts     = 1
+          BackoffRate     = 1.0
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "InferenceFailed"
+        }]
+      }
+      SaveToDatabase = {
+        Type     = "Task"
+        Resource = var.lambda_save_arn
+        Comment  = "Persist new model inference results to DynamoDB and ElastiCache"
+        Parameters = {
+          "inference_prefix.$" = "$.inference_prefix"
+        }
+        Next = "InferenceSucceeded"
+        Retry = [{
+          ErrorEquals     = ["States.TaskFailed"]
+          IntervalSeconds = 10
+          MaxAttempts     = 3
+          BackoffRate     = 2.0
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "InferenceFailed"
+        }]
+      }
+      InferenceSucceeded = {
+        Type = "Succeed"
+      }
+      InferenceFailed = {
+        Type  = "Fail"
+        Error = "InferenceError"
+        Cause = "Batch inference pipeline failed after model approval"
+      }
+    }
+  })
+
+  tags = {
+    Name = "${var.name}-batch-inference"
   }
 }

@@ -189,6 +189,10 @@ def handler(event, context):
         ContentType="application/json",
     )
 
+    # Derive processed_prefix from inference_s3_path:
+    # "s3://awaves-datalake-dev/inference/2026/02/28/00/" -> "processed/2026/02/28/00/"
+    processed_prefix = inf_prefix.replace("inference/", "processed/", 1)
+
     # --- Trigger retraining pipeline if drift detected ---
     if is_drift and SAGEMAKER_PIPELINE_ARN and sm:
         try:
@@ -197,6 +201,7 @@ def handler(event, context):
                 PipelineExecutionDisplayName=f"drift-retrain-{timestamp}",
                 PipelineParameters=[
                     {"Name": "DriftPsi", "Value": str(round(psi, 4))},
+                    {"Name": "ProcessedPrefix", "Value": processed_prefix},
                 ],
             )
         except Exception as e:
@@ -209,4 +214,5 @@ def handler(event, context):
         "threshold": PSI_THRESHOLD,
         "n_records": n_records,
         "inference_prefix": inf_prefix,
+        "processed_prefix": processed_prefix,
     }

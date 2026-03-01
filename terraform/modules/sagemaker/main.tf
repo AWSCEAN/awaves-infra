@@ -37,7 +37,7 @@ resource "aws_sagemaker_domain" "this" {
   auth_mode               = "IAM"
   vpc_id                  = var.vpc_id
   subnet_ids              = var.private_subnet_ids
-  app_network_access_type = "VpcOnly"
+  app_network_access_type = "PublicInternetOnly"
 
   default_user_settings {
     execution_role  = var.sagemaker_execution_role_arn
@@ -108,8 +108,8 @@ locals {
   xgboost_image  = "683313688378.dkr.ecr.${var.aws_region}.amazonaws.com/sagemaker-xgboost:1.7-1"
 
   # S3 paths (deterministic — preprocessing always writes here)
-  scripts_uri    = "s3://${var.s3_bucket_ml}/pipeline/scripts/"
-  train_input_uri = "s3://${var.s3_bucket_ml}/training/"
+  scripts_uri     = "s3://${var.s3_bucket_ml}/pipeline/scripts/"
+  train_input_uri = "s3://${var.s3_bucket_ml}/training/latest/"
   train_out_uri  = "s3://${var.s3_bucket_ml}/pipeline/processed/train/"
   val_out_uri    = "s3://${var.s3_bucket_ml}/pipeline/processed/validation/"
   model_out_uri  = "s3://${var.s3_bucket_ml}/models/"
@@ -127,18 +127,35 @@ resource "aws_sagemaker_pipeline" "training" {
     Version = "2020-12-01"
 
     Parameters = [
-      { Name = "DriftPsi", Type = "String", DefaultValue = "0.0" },
+      { Name = "DriftPsi",        Type = "String", DefaultValue = "0.0" },
+      { Name = "ProcessedPrefix", Type = "String", DefaultValue = "" },
     ]
 
     Steps = [
 
       # -----------------------------------------------------------------------
-      # Step 1: Preprocessing
-      # sklearn Processing Job: parquet -> feature engineering -> train/val CSVs
+      # Step 0: DataCollection (Lambda)
+      # Reads processed CSVs (drift-point features) + Surfline ratings
+      # -> writes labeled CSV to s3://awaves-ml/training/labeled_{ts}.csv
+      # -> returns OutputParameters: TrainingS3Uri
       # -----------------------------------------------------------------------
       {
-        Name = "Preprocessing"
-        Type = "Processing"
+        Name        = "DataCollection"
+        Type        = "Lambda"
+        FunctionArn = var.lambda_data_collection_training_arn
+        Arguments = {
+          ProcessedPrefix = { "Get" = "Parameters.ProcessedPrefix" }
+        }
+      },
+
+      # -----------------------------------------------------------------------
+      # Step 1: Preprocessing
+      # sklearn Processing Job: labeled CSV -> NaN imputation -> train/val CSVs
+      # -----------------------------------------------------------------------
+      {
+        Name      = "Preprocessing"
+        Type      = "Processing"
+        DependsOn = ["DataCollection"]
         Arguments = {
           AppSpecification = {
             ImageUri            = local.sklearn_image
@@ -159,6 +176,7 @@ resource "aws_sagemaker_pipeline" "training" {
               InputName  = "data"
               AppManaged = false
               S3Input = {
+                # DataCollection Lambda writes to training/latest/ (fixed path)
                 S3Uri       = local.train_input_uri
                 LocalPath   = "/opt/ml/processing/input/data"
                 S3DataType  = "S3Prefix"
@@ -265,7 +283,7 @@ resource "aws_sagemaker_pipeline" "training" {
 
       # -----------------------------------------------------------------------
       # Step 3: Evaluation
-      # sklearn Processing Job: compute QWK/accuracy + write drift baseline
+      # xgboost Processing Job: compute QWK/accuracy + write drift baseline
       # Outputs a PropertyFile so the Condition step can read metrics.qwk
       # -----------------------------------------------------------------------
       {
@@ -274,7 +292,7 @@ resource "aws_sagemaker_pipeline" "training" {
         DependsOn = ["Training"]
         Arguments = {
           AppSpecification = {
-            ImageUri            = local.sklearn_image
+            ImageUri            = local.xgboost_image
             ContainerEntrypoint = ["python3", "/opt/ml/processing/input/code/evaluate.py"]
           }
           ProcessingInputs = [
@@ -436,6 +454,12 @@ resource "aws_sagemaker_pipeline" "training" {
 # Instance type: ml.t3.medium  (~$0.05/hr, sufficient for dev inference)
 # =============================================================================
 
+# =============================================================================
+# SageMaker Real-time Endpoint: surf-index (Flow 1 placeholder — XGBoost)
+# Currently unused at runtime (Flow 1 uses Batch Transform).
+# Kept for potential future on-demand hourly inference.
+# =============================================================================
+
 resource "aws_sagemaker_model" "surf_index" {
   count              = var.model_data_url != "" ? 1 : 0
   name               = "${var.name}-surf-index"
@@ -475,5 +499,67 @@ resource "aws_sagemaker_endpoint" "surf_index" {
 
   tags = {
     Name = "${var.name}-surf-index"
+  }
+}
+
+# =============================================================================
+# SageMaker Real-time Endpoint: weekly (Flow 2 — LightGBM + custom inference)
+#
+# Model: Hybrid Recursive LightGBM weekly surf score predictor
+# Container: SKLearn (supports custom inference.py + requirements.txt)
+# Input : JSON { lat, lon, skill_level, current_date, target_date, last_row }
+# Output: JSON { surf_score, skill_level, expected_wave_height }
+#
+# model.tar.gz layout:
+#   model.joblib          (lgb_master + climatology + features)
+#   wave_weighting.json   (Gaussian offset params per skill level)
+#   code/inference.py
+#   code/requirements.txt (lightgbm)
+# =============================================================================
+
+resource "aws_sagemaker_model" "weekly" {
+  count              = var.weekly_model_data_url != "" ? 1 : 0
+  name               = "${var.name}-weekly"
+  execution_role_arn = var.sagemaker_execution_role_arn
+
+  primary_container {
+    image          = local.sklearn_image
+    model_data_url = var.weekly_model_data_url
+    environment = {
+      SAGEMAKER_PROGRAM          = "inference"
+      SAGEMAKER_SUBMIT_DIRECTORY = "/opt/ml/model/code"
+      S3_BUCKET_DATALAKE         = var.s3_bucket_datalake
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-weekly"
+  }
+}
+
+resource "aws_sagemaker_endpoint_configuration" "weekly" {
+  count = var.weekly_model_data_url != "" ? 1 : 0
+  name  = "${var.name}-weekly"
+
+  production_variants {
+    variant_name           = "primary"
+    model_name             = aws_sagemaker_model.weekly[0].name
+    initial_instance_count = 1
+    instance_type          = "ml.t2.medium"
+    initial_variant_weight = 1
+  }
+
+  tags = {
+    Name = "${var.name}-weekly"
+  }
+}
+
+resource "aws_sagemaker_endpoint" "weekly" {
+  count                = var.weekly_model_data_url != "" ? 1 : 0
+  name                 = "${var.name}-weekly"
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.weekly[0].name
+
+  tags = {
+    Name = "${var.name}-weekly"
   }
 }

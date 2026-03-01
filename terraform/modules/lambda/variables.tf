@@ -62,8 +62,14 @@ variable "sns_alerts_topic_arn" {
   type        = string
 }
 
-variable "discord_webhook_url" {
-  description = "Discord webhook URL for alerts (leave empty to skip)"
+variable "discord_deploy_webhook_url" {
+  description = "Discord webhook URL for deploy/infra alerts"
+  type        = string
+  default     = ""
+}
+
+variable "discord_error_webhook_url" {
+  description = "Discord webhook URL for error/monitoring alerts"
   type        = string
   default     = ""
 }
@@ -71,7 +77,7 @@ variable "discord_webhook_url" {
 variable "bedrock_model_id" {
   description = "Bedrock model ID for surf summary generation"
   type        = string
-  default     = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+  default     = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 }
 
 variable "sagemaker_pipeline_arn" {
@@ -82,6 +88,18 @@ variable "sagemaker_pipeline_arn" {
 
 variable "hourly_model_package_group_name" {
   description = "SageMaker Model Package Group name for hourly model (triggers cache invalidation on Approved)"
+  type        = string
+  default     = ""
+}
+
+variable "inference_state_machine_arn" {
+  description = "ARN of the batch inference Step Functions state machine (triggered after model approval)"
+  type        = string
+  default     = ""
+}
+
+variable "sagemaker_endpoint_name" {
+  description = "SageMaker real-time endpoint name for on-demand surf score inference (bedrock_summary fallback)"
   type        = string
   default     = ""
 }

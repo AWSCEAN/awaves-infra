@@ -3,6 +3,11 @@ output "api_call_arn" {
   value       = aws_lambda_function.api_call.arn
 }
 
+output "data_validation_arn" {
+  description = "ARN of the Data Validation Lambda function"
+  value       = aws_lambda_function.data_validation.arn
+}
+
 output "preprocessing_arn" {
   description = "ARN of the Preprocessing Lambda function"
   value       = aws_lambda_function.preprocessing.arn
@@ -61,4 +66,9 @@ output "cache_invalidation_arn" {
 output "cache_invalidation_function_name" {
   description = "Name of the Cache Invalidation Lambda function"
   value       = aws_lambda_function.cache_invalidation.function_name
+}
+
+output "data_collection_training_arn" {
+  description = "ARN of the Data Collection Training Lambda function"
+  value       = aws_lambda_function.data_collection_training.arn
 }

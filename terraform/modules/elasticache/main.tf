@@ -41,7 +41,7 @@ resource "aws_elasticache_replication_group" "valkey" {
   port                 = 6379
 
   subnet_group_name    = aws_elasticache_subnet_group.valkey.name
-  security_group_ids   = [aws_security_group.elasticache.id]
+  security_group_ids   = [aws_security_group.elasticache.id, "sg-01792af2530b17e69"]
 
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true

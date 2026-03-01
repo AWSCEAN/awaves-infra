@@ -55,6 +55,9 @@ FEATURE_COLS = [
     "wave_shore_power", "swell_shore_power", "swell_cross_power",
 ]
 
+# Must match api_call.BATCH_SIZE so we can slice the spots list by batch index
+BATCH_SIZE = 250
+
 # Metadata cols written alongside features for DynamoDB save step
 META_COLS = ["location_id", "spot_id", "datetime"]
 
@@ -77,8 +80,13 @@ def _load_json(key):
     return json.loads(obj["Body"].read().decode())
 
 
-def _flatten_hourly(api_response, variables):
-    """Flatten Open-Meteo hourly response into list of records per location."""
+def _flatten_hourly(api_response, variables, original_spots=None):
+    """Flatten Open-Meteo hourly response into list of records per location.
+
+    original_spots: list of spot dicts (from api_call's spots_{batch}.json).
+      When provided, uses the i-th spot's lat/lon instead of Open-Meteo's
+      grid-snapped coordinates so that location_id matches awaves-dev-locations.
+    """
     records = []
 
     if isinstance(api_response, list):
@@ -88,11 +96,17 @@ def _flatten_hourly(api_response, variables):
     else:
         return records
 
-    for loc_data in locations:
+    for idx, loc_data in enumerate(locations):
         hourly = loc_data.get("hourly", {})
         times = hourly.get("time", [])
-        lat = loc_data.get("latitude")
-        lon = loc_data.get("longitude")
+
+        # Prefer original spot coordinates to avoid Open-Meteo grid snapping
+        if original_spots and idx < len(original_spots):
+            lat = original_spots[idx]["lat"]
+            lon = original_spots[idx]["lon"]
+        else:
+            lat = loc_data.get("latitude")
+            lon = loc_data.get("longitude")
 
         for t_idx, timestamp in enumerate(times):
             record = {
@@ -195,8 +209,17 @@ def handler(event, context):
         marine_data = _load_json(m_file)
         weather_data = _load_json(w_file)
 
-        marine_records = _flatten_hourly(marine_data, MARINE_VARS)
-        weather_records = _flatten_hourly(weather_data, WEATHER_VARS)
+        # Recover original spot coordinates by slicing the already-loaded spots list.
+        # Filename index (e.g. marine_0002.json → 2) tells us which BATCH_SIZE slice
+        # to use, matching the order api_call sent to Open-Meteo.
+        try:
+            file_num = int(m_file.rsplit("marine_", 1)[1].replace(".json", ""))
+            batch_spots = spots[file_num * BATCH_SIZE : (file_num + 1) * BATCH_SIZE]
+        except Exception:
+            batch_spots = []
+
+        marine_records = _flatten_hourly(marine_data, MARINE_VARS, original_spots=batch_spots)
+        weather_records = _flatten_hourly(weather_data, WEATHER_VARS, original_spots=batch_spots)
 
         # Merge marine + weather by (lat, lon, datetime)
         weather_lookup = {}
