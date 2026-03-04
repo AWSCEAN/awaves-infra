@@ -209,14 +209,20 @@ def handler(event, context):
         marine_data = _load_json(m_file)
         weather_data = _load_json(w_file)
 
-        # Recover original spot coordinates by slicing the already-loaded spots list.
-        # Filename index (e.g. marine_0002.json → 2) tells us which BATCH_SIZE slice
-        # to use, matching the order api_call sent to Open-Meteo.
+        # Recover original spot coordinates.
+        # Primary: load spots_{batch}.json saved by api_call alongside the API response.
+        # Fallback: reconstruct from the global spots list by filename index.
+        spots_file = m_file.replace("/marine_", "/spots_")
         try:
-            file_num = int(m_file.rsplit("marine_", 1)[1].replace(".json", ""))
-            batch_spots = spots[file_num * BATCH_SIZE : (file_num + 1) * BATCH_SIZE]
+            batch_spots = _load_json(spots_file)
         except Exception:
-            batch_spots = []
+            try:
+                file_num = int(m_file.rsplit("marine_", 1)[1].replace(".json", ""))
+                batch_spots = spots[file_num * BATCH_SIZE : (file_num + 1) * BATCH_SIZE]
+                print(f"WARNING: spots file not found for {m_file}, using index-based fallback (file_num={file_num})")
+            except Exception:
+                batch_spots = []
+                print(f"ERROR: Could not recover original spots for {m_file}, API grid-snapped coords will be used")
 
         marine_records = _flatten_hourly(marine_data, MARINE_VARS, original_spots=batch_spots)
         weather_records = _flatten_hourly(weather_data, WEATHER_VARS, original_spots=batch_spots)

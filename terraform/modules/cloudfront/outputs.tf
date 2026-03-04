@@ -17,3 +17,8 @@ output "hosted_zone_id" {
   description = "CloudFront hosted zone ID (for Route 53 alias)"
   value       = aws_cloudfront_distribution.this.hosted_zone_id
 }
+
+output "oac_id" {
+  description = "OAC ID created by this module"
+  value       = aws_cloudfront_origin_access_control.frontend.id
+}

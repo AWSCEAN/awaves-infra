@@ -91,6 +91,12 @@ data "archive_file" "data_collection_training" {
   output_path = "${path.module}/handlers/data_collection_training.zip"
 }
 
+data "archive_file" "valkey_test" {
+  type        = "zip"
+  source_file = "${path.module}/handlers/valkey_test.py"
+  output_path = "${path.module}/handlers/valkey_test.zip"
+}
+
 # =============================================================================
 # Lambda Functions
 # =============================================================================
@@ -330,8 +336,8 @@ resource "aws_lambda_function" "alert_ml_pipeline" {
 
   environment {
     variables = {
-      ENVIRONMENT          = var.environment
-      DISCORD_WEBHOOK_URL  = var.discord_error_webhook_url
+      ENVIRONMENT         = var.environment
+      DISCORD_WEBHOOK_URL = var.discord_ml_webhook_url
     }
   }
 
@@ -441,6 +447,42 @@ resource "aws_lambda_function" "bedrock_summary" {
 
   tags = {
     Name = "${var.name}-bedrock-summary"
+  }
+}
+
+# 10. Valkey Test - ElastiCache Valkey connection test
+resource "aws_lambda_function" "valkey_test" {
+  function_name = "${var.name}-valkey-test"
+  role          = var.lambda_execution_role_arn
+  handler       = "lambda_function.handler"
+  runtime       = "python3.12"
+  timeout       = 3
+  memory_size   = 128
+  layers        = [aws_lambda_layer_version.valkey.arn]
+
+  filename         = data.archive_file.valkey_test.output_path
+  source_code_hash = data.archive_file.valkey_test.output_base64sha256
+
+  dynamic "vpc_config" {
+    for_each = var.vpc_id != "" && length(var.private_subnet_ids) > 0 ? [1] : []
+    content {
+      subnet_ids         = var.private_subnet_ids
+      security_group_ids = [aws_security_group.save_lambda[0].id]
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ELASTICACHE_ENDPOINT = var.elasticache_endpoint
+    }
+  }
+
+  tags = {
+    Name = "${var.name}-valkey-test"
   }
 }
 

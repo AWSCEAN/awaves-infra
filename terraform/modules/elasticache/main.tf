@@ -46,6 +46,13 @@ resource "aws_elasticache_replication_group" "valkey" {
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
 
+  log_delivery_configuration {
+    destination      = "/aws/elasticache/valkey-engine"
+    destination_type = "cloudwatch-logs"
+    log_format       = "json"
+    log_type         = "engine-log"
+  }
+
   tags = {
     Name = "${var.name}-valkey"
   }

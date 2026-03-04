@@ -112,6 +112,13 @@ def _psi(baseline_pct, current_pct):
 
 
 def handler(event, context):
+    # DEMO: always return no drift
+    return {
+        "isDrift": False,
+        "reason": "demo_mode",
+        "message": "Drift detection disabled for demo.",
+    }
+    
     inference_s3_path = event.get("inference_s3_path", "")
 
     if not inference_s3_path:

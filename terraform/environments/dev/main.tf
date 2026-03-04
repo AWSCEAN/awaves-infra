@@ -94,6 +94,7 @@ module "lambda" {
   sns_alerts_topic_arn           = module.sns.alerts_topic_arn
   discord_deploy_webhook_url     = var.discord_deploy_webhook_url
   discord_error_webhook_url      = var.discord_error_webhook_url
+  discord_ml_webhook_url         = var.discord_ml_webhook_url
   bedrock_model_id          = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
   vpc_id                    = module.networking.vpc_id
   private_subnet_ids        = module.networking.private_subnet_ids
@@ -343,15 +344,129 @@ module "cloudfront" {
   s3_bucket_id                   = module.s3.bucket_frontend
   s3_bucket_arn                  = module.s3.bucket_frontend_arn
   s3_bucket_regional_domain_name = module.s3.bucket_frontend_regional_domain_name
-  domain_names                   = [var.domain_name, "www.${var.domain_name}"]
+  domain_names                   = ["cdn.awaves.net"]
   acm_certificate_arn            = module.acm.certificate_arn
   alb_dns_name                   = var.alb_dns_name
 }
 
 # =============================================================================
+# CloudFront Distribution 2: awaves.net / www.awaves.net (SPA + API)
+# Distribution 1 (cdn.awaves.net) is managed by module.cloudfront above
+# Each distribution uses its own OAC:
+#   Distribution 1 OAC: managed inside module.cloudfront (import: E3MW5MNGNFYLJV)
+#   Distribution 2 OAC: aws_cloudfront_origin_access_control.main (import: E10LQZJGURKL2M)
+# =============================================================================
+
+resource "aws_cloudfront_origin_access_control" "main" {
+  name                              = "${local.name}-frontend-oac"
+  description                       = "OAC for awaves frontend S3 bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "main" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+  price_class         = "PriceClass_200"
+  http_version        = "http2"
+  aliases             = [var.domain_name, "www.${var.domain_name}"]
+
+  origin {
+    domain_name              = module.s3.bucket_frontend_regional_domain_name
+    origin_id                = "s3-frontend"
+    origin_access_control_id = aws_cloudfront_origin_access_control.main.id
+  }
+
+  origin {
+    domain_name = "k8s-awavesde-webappin-35d6501f04-249418890.us-east-1.elb.amazonaws.com"
+    origin_id   = "alb-api"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "s3-frontend"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    default_ttl = 86400
+    max_ttl     = 31536000
+    min_ttl     = 0
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    target_origin_id       = "alb-api"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true
+
+    forwarded_values {
+      query_string = true
+      headers      = ["Authorization", "Origin", "Accept", "Access-Control-Request-Headers", "Access-Control-Request-Method"]
+      cookies {
+        forward = "all"
+      }
+    }
+
+    default_ttl = 0
+    max_ttl     = 0
+    min_ttl     = 0
+  }
+
+  custom_error_response {
+    error_code            = 403
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 300
+  }
+
+  custom_error_response {
+    error_code            = 404
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 300
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    acm_certificate_arn      = module.acm.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = {
+    Name = "${local.name}-cloudfront"
+  }
+
+  depends_on = [module.cloudfront]
+}
+
+# =============================================================================
 # Route 53 - A Alias Records (CloudFront)
-# Defined here (not in route53 module) to avoid circular dependency:
-#   route53 zone → acm → cloudfront → A records
+# apex/www → distribution 2 (awaves.net), cdn → distribution 1 (module.cloudfront)
 # =============================================================================
 
 resource "aws_route53_record" "apex" {
@@ -360,8 +475,8 @@ resource "aws_route53_record" "apex" {
   type    = "A"
 
   alias {
-    name                   = module.cloudfront.domain_name
-    zone_id                = module.cloudfront.hosted_zone_id
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
     evaluate_target_health = false
   }
 }
@@ -372,8 +487,8 @@ resource "aws_route53_record" "www" {
   type    = "A"
 
   alias {
-    name                   = module.cloudfront.domain_name
-    zone_id                = module.cloudfront.hosted_zone_id
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
     evaluate_target_health = false
   }
 }

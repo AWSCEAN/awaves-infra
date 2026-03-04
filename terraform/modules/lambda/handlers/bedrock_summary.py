@@ -19,7 +19,7 @@ Input event:
   {
     "location_id":    "35.1795#129.2185",
     "surf_timestamp": "2026-01-28T06:00:00Z",
-    "user_level":     "LOW"  # LOW | MEDIUM | HIGH (Aurora users.user_level)
+    "surfing_level":     "LOW"  # LOW | MEDIUM | HIGH (Aurora users.surfing_level)
   }
 
 Output:
@@ -190,7 +190,10 @@ def _surf_score_from_sagemaker(conditions, geo, surf_timestamp):
 def handler(event, context):
     location_id    = event["location_id"]
     surf_timestamp = event["surf_timestamp"]
-    user_level     = LEVEL_MAP.get(event.get("user_level", "LOW"), "BEGINNER")
+    # surfing_level     = LEVEL_MAP.get(event.get("surfing_level", "LOW"), "BEGINNER")
+    surfing_level = event.get("surfing_level", "BEGINNER").upper()
+    if surfing_level not in ("BEGINNER", "INTERMEDIATE", "ADVANCED"):
+        surfing_level = "BEGINNER"
 
     # 1. DynamoDB 조회 — camelCase PK/SK (save.py 스키마 기준)
     response = table.get_item(
@@ -199,7 +202,7 @@ def handler(event, context):
     item = response.get("Item", {})
 
     # 2. 캐시 히트 확인
-    cache_attr = f"ai_summary_{user_level}"
+    cache_attr = f"ai_summary_{surfing_level}"
     if cache_attr in item:
         cached = item[cache_attr]
         try:
@@ -219,7 +222,7 @@ def handler(event, context):
 
     # 4. surf score: derivedMetrics 우선, SageMaker 폴백
     derived    = item.get("derivedMetrics", {})
-    level_data = derived.get(user_level, {})
+    level_data = derived.get(surfing_level, {})
     if level_data and level_data.get("surfScore") is not None:
         surf_score = float(level_data["surfScore"])
     else:
@@ -233,7 +236,7 @@ def handler(event, context):
     - 풍속: {ws}m/s
     - 수온: {wt}°C
     - 서핑 점수: {surf_score}
-    - 서핑 레벨: {user_level}
+    - 서핑 레벨: {surfing_level}
     </data>
     """
 

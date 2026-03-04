@@ -6,26 +6,27 @@
 # =============================================================================
 
 locals {
-  s3_origin_id  = "s3-frontend"
+  s3_origin_id  = "s3-awaves-static"
   alb_origin_id = "alb-api"
 }
 
 # OAC (Origin Access Control) — S3 private access
 resource "aws_cloudfront_origin_access_control" "frontend" {
-  name                              = "${var.name}-frontend-oac"
-  description                       = "OAC for awaves frontend S3 bucket"
+  name                              = "awaves-s3-oac"
+  description                       = "OAC for awaves static assets"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
 
 resource "aws_cloudfront_distribution" "this" {
-  enabled             = true
-  is_ipv6_enabled     = true
-  default_root_object = "index.html"
-  price_class         = "PriceClass_200"  # NA + EU + Asia (excl. South America/Africa/Australia)
-  web_acl_id          = var.waf_web_acl_arn != null ? var.waf_web_acl_arn : null
-  aliases             = var.domain_names
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "awaves static asset CDN"
+  http_version    = "http2and3"
+  price_class     = "PriceClass_100"
+  web_acl_id      = var.waf_web_acl_arn != null ? var.waf_web_acl_arn : null
+  aliases         = var.domain_names
 
   # =============================================================================
   # Origin 1: S3 (Frontend static assets)
@@ -64,21 +65,10 @@ resource "aws_cloudfront_distribution" "this" {
   default_cache_behavior {
     target_origin_id       = local.s3_origin_id
     viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true
-
-    forwarded_values {
-      query_string = false
-      cookies {
-        forward = "none"
-      }
-    }
-
-    # SPA: 1 day cache for assets, 0 for index.html (handled by S3 metadata)
-    default_ttl = 86400
-    max_ttl     = 31536000
-    min_ttl     = 0
+    cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # CachingOptimized (AWS managed)
   }
 
   # =============================================================================
@@ -109,21 +99,6 @@ resource "aws_cloudfront_distribution" "this" {
       max_ttl     = 0
       min_ttl     = 0
     }
-  }
-
-  # SPA fallback: 404 → index.html (client-side routing)
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 300
-  }
-
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 300
   }
 
   restrictions {

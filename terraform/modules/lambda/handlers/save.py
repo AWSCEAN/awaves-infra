@@ -16,6 +16,7 @@ Output CSV columns (from inference.py):
 DynamoDB item written (awaves-dev-surf-info):
   locationId (PK), surfTimestamp (SK), expiredAt (TTL),
   geo { lat, lng },
+  location { displayName, city, state, country },
   conditions { waveHeight, wavePeriod, windSpeed, waterTemperature },
   derivedMetrics {
     BEGINNER     { surfScore, surfGrade },
@@ -50,13 +51,16 @@ SAVED_LIST_TABLE = os.environ.get("DYNAMODB_SAVED_LIST_TABLE", "")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 ELASTICACHE_ENDPOINT = os.environ.get("ELASTICACHE_ENDPOINT", "")
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "awaves-v1")
+LOCATIONS_TABLE = os.environ.get("DYNAMODB_LOCATIONS_TABLE", f"awaves-{ENVIRONMENT}-locations")
 
 # ── AWS clients ───────────────────────────────────────────────────────────────
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(DYNAMODB_TABLE)
 _saved_table = None
+_locations_table = None
 _redis_client = None
+_location_cache = {}
 
 
 def _get_saved_table():
@@ -64,6 +68,37 @@ def _get_saved_table():
     if _saved_table is None and SAVED_LIST_TABLE:
         _saved_table = dynamodb.Table(SAVED_LIST_TABLE)
     return _saved_table
+
+
+def _get_locations_table():
+    global _locations_table
+    if _locations_table is None and LOCATIONS_TABLE:
+        _locations_table = dynamodb.Table(LOCATIONS_TABLE)
+    return _locations_table
+
+
+def _get_location_info(location_id):
+    if location_id in _location_cache:
+        return _location_cache[location_id]
+
+    loc_tbl = _get_locations_table()
+    location = {"displayName": "", "city": "", "state": "", "country": ""}
+
+    if loc_tbl:
+        try:
+            resp = loc_tbl.get_item(Key={"locationId": location_id})
+            loc = resp.get("Item", {})
+            location = {
+                "displayName": loc.get("displayName", ""),
+                "city":        loc.get("city", ""),
+                "state":       loc.get("state", ""),
+                "country":     loc.get("country", ""),
+            }
+        except Exception as e:
+            print(f"[save] Failed to fetch location {location_id}: {e}")
+
+    _location_cache[location_id] = location
+    return location
 
 
 def _get_valkey():
@@ -182,7 +217,7 @@ def _detect_and_flag_changes(latest_per_location, r):
 
         # Paginated scan: find all saved items for this location
         saved_items = []
-        scan_kwargs = {"FilterExpression": Attr("LocationId").eq(location_id)}
+        scan_kwargs = {"FilterExpression": Attr("locationId").eq(location_id)}
         while True:
             resp = tbl.scan(**scan_kwargs)
             saved_items.extend(resp.get("Items", []))
@@ -203,7 +238,7 @@ def _detect_and_flag_changes(latest_per_location, r):
 
             # Map the user's SurferLevel directly to derivedMetrics key
             # (BEGINNER | INTERMEDIATE | ADVANCED — 1:1 match)
-            surfer_level = item.get("SurferLevel", "BEGINNER")
+            surfer_level = item.get("surferLevel", "BEGINNER")
             level_data = new_derived.get(surfer_level) or new_derived.get("BEGINNER", {})
             new_score = level_data.get("surfScore", 0.0)
             new_grade = level_data.get("surfGrade", "F")
@@ -318,6 +353,7 @@ def handler(event, context):
                 y_int = row.get("y_pred_int")
                 y_beg = row.get("y_pred_beg")
                 lat, lng = _parse_geo(location_id)
+                location = _get_location_info(location_id)
 
                 item = {
                     "locationId": location_id,
@@ -327,6 +363,7 @@ def handler(event, context):
                         "lat": _to_decimal(lat),
                         "lng": _to_decimal(lng),
                     },
+                    "location": location,
                     "conditions": {
                         "waveHeight":       _to_decimal(row.get("wave_height")),
                         "wavePeriod":       _to_decimal(row.get("wave_period")),
@@ -366,8 +403,6 @@ def handler(event, context):
                 # Track nearest upcoming record per location for ElastiCache
                 try:
                     row_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                    if row_dt.tzinfo is None:
-                        row_dt = row_dt.replace(tzinfo=timezone.utc)
                     if row_dt >= now_ts:
                         prev = latest_per_location.get(location_id)
                         if prev is None or row_dt < prev[0]:
@@ -380,12 +415,13 @@ def handler(event, context):
                             adv_score = round(float(y_adv), 1) if y_adv else 0.0
 
                             latest_per_location[location_id] = (row_dt, {
-                                "locationId":   location_id,
+                                "locationId":    location_id,
                                 "surfTimestamp": dt_str,
                                 "geo": {
                                     "lat": lat,
                                     "lng": lng,
                                 },
+                                "location": location,
                                 "conditions": {
                                     "waveHeight":       wh,
                                     "wavePeriod":       wp,
@@ -407,11 +443,11 @@ def handler(event, context):
                                     },
                                 },
                                 "metadata": {
-                                    "modelVersion":  MODEL_VERSION,
-                                    "dataSource":    "open-meteo",
+                                    "modelVersion":   MODEL_VERSION,
+                                    "dataSource":     "open-meteo",
                                     "predictionType": "FORECAST",
-                                    "createdAt":     created_at,
-                                    "cacheSource":   "SURF_LATEST",
+                                    "createdAt":      created_at,
+                                    "cacheSource":    "SURF_LATEST",
                                 },
                             })
                 except Exception:

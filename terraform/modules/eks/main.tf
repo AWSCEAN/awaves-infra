@@ -15,6 +15,8 @@ module "eks" {
   # Public access for kubectl (dev only)
   cluster_endpoint_public_access = true
 
+  cluster_enabled_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+
   # Grant cluster creator (Terraform runner) admin access via access entries
   authentication_mode                      = "API_AND_CONFIG_MAP"
   enable_cluster_creator_admin_permissions = true
@@ -55,13 +57,24 @@ module "eks" {
 
   # Managed node group
   eks_managed_node_groups = {
-    default = {
-      instance_types = ["t3.small"]
-      min_size       = 1
-      max_size       = 3
-      desired_size   = 3
+    "awaves-dev-t3medium" = {
+      name            = "awaves-dev-t3medium"
+      use_name_prefix = false
+      instance_types  = ["t3.medium"]
+      min_size        = 1
+      max_size        = 3
+      desired_size    = 3
 
       subnet_ids = var.private_subnet_ids
+
+      update_config = {
+        max_unavailable = 1
+      }
+
+      # 콘솔에서 생성된 노드 그룹 상태 유지 (교체 방지)
+      create_iam_role           = false
+      iam_role_arn              = "arn:aws:iam::${var.account_id}:role/default-eks-node-group-20260222163103724900000005"
+      use_custom_launch_template = false
     }
   }
 
@@ -339,6 +352,12 @@ resource "aws_iam_policy" "backend_api" {
         Resource = "arn:aws:sagemaker:${data.aws_region.current.name}:${var.account_id}:endpoint/${var.name}-*"
       },
       {
+        Sid      = "LambdaInvoke"
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = "arn:aws:lambda:${data.aws_region.current.name}:${var.account_id}:function:${var.name}-*"
+      },
+      {
         Sid      = "OpenSearchAccess"
         Effect   = "Allow"
         Action   = ["es:ESHttp*"]
@@ -408,7 +427,7 @@ resource "aws_iam_role" "backend_api" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:${var.name}:backend-api"
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:api:awaves-api-sa"
           "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
         }
       }
@@ -421,6 +440,21 @@ resource "aws_iam_role" "backend_api" {
 resource "aws_iam_role_policy_attachment" "backend_api" {
   role       = aws_iam_role.backend_api.name
   policy_arn = aws_iam_policy.backend_api.arn
+}
+
+
+resource "aws_iam_role_policy" "backend_api_lambda_invoke" {
+  name = "LambdaInvoke"
+  role = aws_iam_role.backend_api.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = "arn:aws:lambda:${data.aws_region.current.name}:${var.account_id}:function:${var.name}-bedrock-summary"
+    }]
+  })
 }
 
 resource "aws_iam_role_policy_attachment" "backend_api_xray" {

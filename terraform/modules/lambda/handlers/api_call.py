@@ -122,6 +122,16 @@ def handler(event, context):
         batch_idx = i // BATCH_SIZE
 
         try:
+            # Save original spot coordinates for this batch so preprocessing
+            # can recover them without depending on filename-based index mapping.
+            batch_spot_meta = [{"lat": batch_lats[j], "lon": batch_lons[j]} for j in range(len(batch_lats))]
+            s3.put_object(
+                Bucket=S3_BUCKET,
+                Key=f"{prefix}/spots_{batch_idx:04d}.json",
+                Body=json.dumps(batch_spot_meta),
+                ContentType="application/json",
+            )
+
             # Fetch marine data
             marine_data = _fetch_marine_batch(batch_lats, batch_lons)
             s3.put_object(

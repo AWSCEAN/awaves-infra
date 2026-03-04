@@ -74,6 +74,12 @@ variable "discord_error_webhook_url" {
   default     = ""
 }
 
+variable "discord_ml_webhook_url" {
+  description = "Discord webhook URL for ML pipeline alerts"
+  type        = string
+  default     = ""
+}
+
 variable "bedrock_model_id" {
   description = "Bedrock model ID for surf summary generation"
   type        = string

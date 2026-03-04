@@ -15,6 +15,7 @@ Environment variables required:
 import json
 import logging
 import os
+import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -30,6 +31,27 @@ COLOR_ERROR   = 15158332   # #E74C3C red
 COLOR_OK      = 3066993    # #2ECC71 green
 COLOR_DEPLOY  = 3447003    # #3498DB blue
 COLOR_WARNING = 16776960   # #FFFF00 yellow
+COLOR_SUCCESS = 0x57F287   # green    – deployment succeeded
+COLOR_FAILURE = 0xED4245   # red      – deployment failed
+
+
+_STATUS_META = {
+    "triggered": {
+        "color":       COLOR_DEPLOY,
+        "title":       ":rocket: Deployment triggered — `{branch}`",
+        "description": "A push to **{branch}** has started the EKS deployment pipeline.",
+    },
+    "success": {
+        "color":       COLOR_SUCCESS,
+        "title":       ":white_check_mark: Deployment succeeded — `{branch}`",
+        "description": "The EKS deployment for **{branch}** completed successfully.",
+    },
+    "failure": {
+        "color":       COLOR_FAILURE,
+        "title":       ":x: Deployment failed — `{branch}`",
+        "description": "The EKS deployment for **{branch}** encountered an error. Check the logs.",
+    },
+}
 
 
 # ── Discord helper ────────────────────────────────────────────────────────────
@@ -55,6 +77,23 @@ def _send_discord(webhook_url: str, embed: dict) -> None:
         logger.error("Discord send failed: %s", e)
 
 
+# ── CloudWatch console URL helpers ───────────────────────────────────────────
+
+def _cloudwatch_alarm_url(region_code: str, alarm_name: str) -> str:
+    encoded = urllib.parse.quote(alarm_name, safe="")
+    return (
+        f"https://{region_code}.console.aws.amazon.com/cloudwatch/home"
+        f"?region={region_code}#alarmsV2:alarm/{encoded}"
+    )
+
+def _cloudwatch_logs_url(region_code: str, log_group: str) -> str:
+    encoded = urllib.parse.quote(log_group, safe="")
+    return (
+        f"https://{region_code}.console.aws.amazon.com/cloudwatch/home"
+        f"?region={region_code}#logsV2:log-groups/log-group/{encoded}"
+    )
+
+
 # ── Message builders ──────────────────────────────────────────────────────────
 
 def _build_cloudwatch_embed(msg: dict) -> dict:
@@ -64,6 +103,7 @@ def _build_cloudwatch_embed(msg: dict) -> dict:
     CloudWatch alarm states: ALARM | OK | INSUFFICIENT_DATA
     """
     alarm_name  = msg.get("AlarmName", "Unknown Alarm")
+    alarm_arn   = msg.get("AlarmArn", "")
     state       = msg.get("NewStateValue", "UNKNOWN")
     reason      = msg.get("NewStateReason", "")
     region      = msg.get("Region", "us-east-1")
@@ -73,6 +113,12 @@ def _build_cloudwatch_embed(msg: dict) -> dict:
     namespace   = trigger.get("Namespace", "")
     threshold   = trigger.get("Threshold", "")
     period      = trigger.get("Period", "")
+    dimensions  = trigger.get("Dimensions", [])
+
+    # ARN에서 API 리전 코드 추출 (Region 필드는 "US East (N. Virginia)" 형식이라 URL 사용 불가)
+    # arn:aws:cloudwatch:us-east-1:123456789012:alarm:AlarmName
+    arn_parts   = alarm_arn.split(":")
+    region_code = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else "us-east-1"
 
     if state == "ALARM":
         color = COLOR_ERROR
@@ -100,6 +146,22 @@ def _build_cloudwatch_embed(msg: dict) -> dict:
     if region:
         fields.append({"name": "Region",    "value": region,                        "inline": True})
 
+    # 콘솔 링크
+    alarm_url = _cloudwatch_alarm_url(region_code, alarm_name)
+    links = [f"[View Alarm]({alarm_url})"]
+
+    if namespace == "AWS/Lambda":
+        for dim in dimensions:
+            if dim.get("name") == "FunctionName":
+                log_group = f"/aws/lambda/{dim['value']}"
+                links.append(f"[View Logs]({_cloudwatch_logs_url(region_code, log_group)})")
+                break
+    elif namespace == "awaves/Application":
+        log_group = "/aws/eks/awaves-dev/application"
+        links.append(f"[View Logs]({_cloudwatch_logs_url(region_code, log_group)})")
+
+    fields.append({"name": "Links", "value": " | ".join(links), "inline": False})
+
     return {
         "title":       title,
         "description": reason[:2000] if reason else "No details available.",
@@ -114,22 +176,32 @@ def _build_deployment_embed(msg: dict) -> dict:
     Build a Discord embed from a deployment notification published by
     the GitHub Actions deploy.yml workflow.
 
-    Expected keys: type, branch, commit, actor, repo
+    Expected keys: type, status, branch, commit, actor, repo
+    status: "triggered" | "success" | "failure"  (defaults to "triggered")
     """
-    branch = msg.get("branch", "main")
-    commit = msg.get("commit", "")[:7]
-    actor  = msg.get("actor", "unknown")
-    repo   = msg.get("repo", "AWSCEAN/awaves-agent")
-    ts     = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    status      = msg.get("status", "triggered")
+    branch      = msg.get("branch", "main")
+    commit_full = msg.get("commit", "")
+    commit      = commit_full[:7]
+    actor       = msg.get("actor", "unknown")
+    repo        = msg.get("repo", "AWSCEAN/awaves-agent")
+    ts          = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    meta = _STATUS_META.get(status, _STATUS_META["triggered"])
+
+    commit_url  = f"https://github.com/{repo}/commit/{commit_full}"
+    actions_url = f"https://github.com/{repo}/actions"
+    links       = [f"[View Commit]({commit_url})", f"[View Actions]({actions_url})"]
 
     return {
-        "title":       f":rocket: Deployment triggered — `{branch}`",
-        "description": f"A push to **{branch}** has started the EKS deployment pipeline.",
-        "color":       COLOR_DEPLOY,
+        "title":       meta["title"].format(branch=branch),
+        "description": meta["description"].format(branch=branch),
+        "color":       meta["color"],
         "fields": [
-            {"name": "Repository", "value": repo,          "inline": True},
-            {"name": "Actor",      "value": actor,         "inline": True},
-            {"name": "Commit",     "value": f"`{commit}`", "inline": True},
+            {"name": "Repository", "value": repo,               "inline": True},
+            {"name": "Actor",      "value": actor,              "inline": True},
+            {"name": "Commit",     "value": f"`{commit}`",      "inline": True},
+            {"name": "Links",      "value": " | ".join(links),  "inline": False},
         ],
         "footer": {"text": f"GitHub Actions • {ts}"},
     }

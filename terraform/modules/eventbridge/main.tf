@@ -41,7 +41,7 @@ resource "aws_scheduler_schedule" "data_collection" {
 
   schedule_expression          = "cron(0 0/3 * * ? *)" # 00:00, 03:00, 06:00 ... 21:00 KST
   schedule_expression_timezone = "Asia/Seoul"
-  state                        = "DISABLED"
+  state                        = "ENABLED"
 
   flexible_time_window {
     mode = "OFF"

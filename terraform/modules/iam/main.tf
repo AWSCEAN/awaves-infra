@@ -137,9 +137,10 @@ resource "aws_iam_policy" "lambda_bedrock_access" {
     Statement = [{
       Sid    = "BedrockInvokeModel"
       Effect = "Allow"
-      Action = ["bedrock:InvokeModel"]
+      Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
       Resource = [
-        "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+        "arn:aws:bedrock:*::foundation-model/anthropic.*",
+        "arn:aws:bedrock:*:${var.account_id}:inference-profile/*"
       ]
     }]
   })
@@ -1446,18 +1447,12 @@ resource "aws_iam_policy" "cicd" {
         Resource = "*"
       },
       {
-        Sid      = "EKSList"
-        Effect   = "Allow"
-        Action   = ["eks:ListClusters"]
-        Resource = "*"
-      },
-      {
         Sid    = "S3FrontendDeploy"
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
         Resource = [
-          "arn:aws:s3:::${var.name}-frontend-*",
-          "arn:aws:s3:::${var.name}-frontend-*/*"
+          "arn:aws:s3:::awaves-frontend-dev-${var.account_id}",
+          "arn:aws:s3:::awaves-frontend-dev-${var.account_id}/*"
         ]
       },
       {
